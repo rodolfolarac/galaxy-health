@@ -1,0 +1,160 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────
+   Galaxy Health — sistema de tokens (mesmo do Galaxy Cards)
+   Base: o vazio entre estrelas. Acentos: nebulosa (violeta→magenta),
+   estrela quente (âmbar) e estrela fria (ciano).
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  --color-void: #07060f;
+  --color-deep: #100a24;
+  --color-panel: #16103154;
+  --color-ridge: #ffffff14;
+
+  --color-nebula: #7c3aed;
+  --color-nebula-soft: #a678ff;
+  --color-magenta: #e8489f;
+  --color-cyan: #3de0e8;
+  --color-amber: #ffb25c;
+  --color-lime: #a3e635;
+
+  --color-starlight: #ece9ff;
+  --color-dust: #a79fd0;
+  --color-faint: #6f6796;
+
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-reader: 'Newsreader', ui-serif, Georgia, serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-void);
+  color: var(--color-starlight);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-magenta) 45%, transparent);
+  color: #fff;
+}
+
+/* Foco sempre visível — teclado e leitor de tela. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Barra de rolagem discreta, no tom da poeira estelar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a2f66 transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #3a2f66;
+  border-radius: 99px;
+}
+
+/* ── Vidro: painéis que flutuam sobre a nebulosa ── */
+.glass {
+  background: linear-gradient(
+    160deg,
+    color-mix(in oklab, #2a1d5c 34%, transparent),
+    color-mix(in oklab, #0d0820 62%, transparent)
+  );
+  border: 1px solid var(--color-ridge);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+
+.glass-strong {
+  background: linear-gradient(
+    160deg,
+    color-mix(in oklab, #32236e 52%, transparent),
+    color-mix(in oklab, #0b0719 80%, transparent)
+  );
+  border: 1px solid #ffffff1f;
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+
+/* ── Brilho de nebulosa atrás de elementos de destaque ── */
+.aura::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--color-nebula) 40%, transparent),
+    transparent 70%
+  );
+  filter: blur(40px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Pulso lento para o botão de abrir baralho. */
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-nebula) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 42px 6px color-mix(in oklab, var(--color-nebula) 22%, transparent);
+  }
+}
+.breathe {
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Inputs numéricos sem setas: a digitação no celular é o caminho principal. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Pequeno brilho ao bater recorde. */
+@keyframes pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.pop {
+  animation: pop 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Área segura do iPhone para barras fixas no rodapé. */
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
