@@ -50,6 +50,9 @@ export function LoginScreen({ onEnter }: { onEnter: () => void }) {
               id="passcode"
               type="password"
               autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               autoFocus
               value={passcode}
               onChange={(e) => setPasscode(e.target.value)}

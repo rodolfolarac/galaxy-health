@@ -6,8 +6,10 @@
  */
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
+import { normalizePasscode } from '../shared/passcode.js';
 
-const passcode = process.argv[2];
+// Mesma normalização do login: sem espaços nas pontas, minúsculas.
+const passcode = normalizePasscode(process.argv[2] ?? '');
 
 if (!passcode) {
   console.error('\nUso:  npm run passcode -- "seu-codigo-aqui"\n');

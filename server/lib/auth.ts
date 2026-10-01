@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { loginAttempts } from '../db/schema.js';
+import { normalizePasscode } from '../../shared/passcode.js';
 
 const COOKIE = 'gh_session';
 /** Sessão longa: o navegador lembra o acesso e ela se renova a cada visita. */
@@ -26,9 +27,11 @@ function passcodeHash(): string {
 
 /** Comparação do código digitado com o hash bcrypt guardado no .env. */
 export async function verifyPasscode(input: string): Promise<boolean> {
-  if (typeof input !== 'string' || input.length === 0 || input.length > 200) return false;
+  if (typeof input !== 'string' || input.length > 200) return false;
+  const code = normalizePasscode(input);
+  if (!code) return false;
   try {
-    return await bcrypt.compare(input, passcodeHash());
+    return await bcrypt.compare(code, passcodeHash());
   } catch {
     return false;
   }
