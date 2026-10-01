@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Equal, Minus, Plus, SkipForward } from 'lucide-react';
-import { formatDuration, formatKg, relativeDay } from '../lib/format';
+import { formatDuration, formatKg, formatSeconds, relativeDay } from '../lib/format';
 import type { CompareRow, Comparison, Trend } from '../lib/types';
 import { groupSetsByLoad, LoadSummary } from './Load';
 import { cx, Panel } from './ui';
@@ -165,7 +165,7 @@ function Side({
       </div>
       <p className="text-xs text-dust">
         {block.perf.sets} séries
-        {isTime ? ` · ${block.perf.totalSeconds}s no total` : ` · ${block.perf.totalReps} reps`}
+        {isTime ? ` · ${formatSeconds(block.perf.totalSeconds)} no total` : ` · ${block.perf.totalReps} reps`}
         {block.perf.maxLoad != null && ` · máx ≈ ${formatKg(block.perf.maxLoad)}`}
       </p>
       {block.sets.some((s) => s.notes) && (
@@ -174,7 +174,7 @@ function Side({
             .filter((s) => s.notes)
             .map((s) => (
               <li key={s.id} className="text-dust">
-                <span className="text-xs text-faint">S{s.position + 1} · {isTime ? `${s.seconds}s` : `${s.reps} reps`} — </span>
+                <span className="text-xs text-faint">S{s.position + 1} · {isTime ? formatSeconds(s.seconds ?? 0) : `${s.reps} reps`} — </span>
                 <span className="italic">“{s.notes}”</span>
               </li>
             ))}

@@ -6,6 +6,7 @@ import {
   EQUIPMENT_LABEL,
   formatDay,
   formatKg,
+  formatSeconds,
   KIND_LABEL,
   relativeDay,
   youtubeId,
@@ -18,6 +19,7 @@ import {
   Button,
   Chip,
   cx,
+  DurationInput,
   EmptyState,
   Field,
   Input,
@@ -365,16 +367,16 @@ export function ExerciseEditor({
             <NumberInput value={f.defaultSets} onChange={(n) => set({ defaultSets: n ?? 1 })} />
           </Field>
           {f.measure === 'time' ? (
-            <Field label="Segundos">
-              <NumberInput value={f.defaultSeconds} onChange={(n) => set({ defaultSeconds: n })} />
+            <Field label="Tempo">
+              <DurationInput value={f.defaultSeconds} onChange={(n) => set({ defaultSeconds: n })} />
             </Field>
           ) : (
             <Field label="Reps">
               <NumberInput value={f.defaultReps} onChange={(n) => set({ defaultReps: n })} />
             </Field>
           )}
-          <Field label="Descanso (s)">
-            <NumberInput value={f.restSeconds} onChange={(n) => set({ restSeconds: n ?? 0 })} />
+          <Field label="Descanso">
+            <DurationInput value={f.restSeconds} onChange={(n) => set({ restSeconds: n ?? 0 })} />
           </Field>
         </div>
 
@@ -475,7 +477,7 @@ function ExerciseDetail({
               : metric === 'total'
                 ? isTime ? x.perf.totalSeconds : x.perf.totalReps
                 : isTime ? x.perf.bestSeconds : x.perf.bestReps;
-        const sets = x.sets.map((s) => (isTime ? `${s.seconds}s` : s.reps)).join(' · ');
+        const sets = x.sets.map((s) => (isTime ? formatSeconds(s.seconds ?? 0) : s.reps)).join(' · ');
         return { key: String(x.sessionExerciseId), label: formatDay(x.day, { weekday: undefined }), value, detail: sets };
       });
   }, [data, metric, isTime]);
@@ -564,7 +566,7 @@ function ExerciseDetail({
               </div>
               {points.length >= 2 ? (
                 <Panel className="p-3">
-                  <LineChart points={points} unit={unit} />
+                  <LineChart points={points} unit={unit} format={isTime && metric !== 'load' && metric !== 'volume' ? formatSeconds : undefined} />
                 </Panel>
               ) : (
                 <p className="text-sm text-faint">O gráfico aparece a partir da segunda vez.</p>
@@ -580,7 +582,7 @@ function ExerciseDetail({
                   {data.records.map((r) => (
                     <div key={r.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-black/20 px-3 py-2">
                       <LoadSummary value={r} className="flex-1" />
-                      <span className="font-semibold tabular-nums">{isTime ? `${r.bestSeconds}s` : `${r.bestReps} reps`}</span>
+                      <span className="font-semibold tabular-nums">{isTime ? formatSeconds(r.bestSeconds) : `${r.bestReps} reps`}</span>
                       <span className="text-xs text-faint">{relativeDay(r.day)}</span>
                     </div>
                   ))}
@@ -603,7 +605,7 @@ function ExerciseDetail({
                       {x.sets.filter((s) => s.done).map((s) => (
                         <p key={s.id} className="flex flex-wrap items-center gap-x-3 text-sm">
                           <span className="w-5 text-faint tabular-nums">{s.position + 1}</span>
-                          <span className="w-14 font-semibold tabular-nums">{isTime ? `${s.seconds}s` : `${s.reps} reps`}</span>
+                          <span className="w-14 font-semibold tabular-nums">{isTime ? formatSeconds(s.seconds ?? 0) : `${s.reps} reps`}</span>
                           <LoadSummary value={s} loadKg={s.loadKg} showEmpty={false} className="text-xs" />
                           {s.notes && <span className="text-xs text-dust italic">{s.notes}</span>}
                         </p>

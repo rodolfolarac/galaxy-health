@@ -3,7 +3,7 @@ import { Link2, Weight } from 'lucide-react';
 import { api } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
 import type { SetRow } from '../lib/types';
-import { formatKg } from '../lib/format';
+import { formatKg, formatSeconds } from '../lib/format';
 import { normalizeSetup } from '../../shared/load';
 import { Button, Chip, cx, Field, Modal, NumberInput, Textarea } from './ui';
 
@@ -211,7 +211,7 @@ export function LoadPicker({
 export function groupSetsByLoad(sets: SetRow[], measure: string) {
   const groups: { set: SetRow; values: string[] }[] = [];
   for (const s of sets) {
-    const v = measure === 'time' ? `${s.seconds ?? '—'}s` : String(s.reps ?? '—');
+    const v = measure === 'time' ? (s.seconds != null ? formatSeconds(s.seconds) : '—') : String(s.reps ?? '—');
     const last = groups[groups.length - 1];
     const same =
       last &&

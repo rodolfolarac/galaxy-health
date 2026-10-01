@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
-import { formatDay, formatDuration, formatSeconds, localDay, relativeDay, relativeTime, targetLabel, WEEKDAYS } from '../lib/format';
+import { formatClock, formatDay, formatDuration, formatSeconds, localDay, relativeDay, relativeTime, targetLabel, WEEKDAYS } from '../lib/format';
 import type { Exercise, Today, WorkoutLite } from '../lib/types';
 import { useCountdown } from '../lib/timers';
 import { formatEstimate } from '../../shared/estimate';
@@ -25,12 +25,12 @@ import {
   Button,
   Chip,
   cx,
+  DurationInput,
   EmptyState,
   Field,
   Input,
   Modal,
   Notice,
-  NumberInput,
   Panel,
   SectionTitle,
   Spinner,
@@ -563,15 +563,15 @@ function CheckinModal({
         )}
         {exercise?.instructions && <p className="text-sm leading-relaxed text-dust">{exercise.instructions}</p>}
         <div className="flex items-end gap-3">
-          <Field label={`Tempo (segundos)${exercise?.perSide ? ' por lado' : ''}`}>
-            <NumberInput value={seconds} onChange={setSeconds} className="w-32" />
+          <Field label={`Tempo${exercise?.perSide ? ' por lado' : ''}`}>
+            <DurationInput value={seconds} onChange={setSeconds} className="w-32" />
           </Field>
           <Button
             variant="outline"
             onClick={() => (timer.running ? timer.stop() : timer.start(seconds ?? 30))}
           >
             <Timer className="size-4" aria-hidden />
-            {timer.running ? `${timer.left}s — parar` : 'Iniciar timer'}
+            {timer.running ? `${formatClock(timer.left)} — parar` : 'Iniciar timer'}
           </Button>
         </div>
         <Field label="Observação">

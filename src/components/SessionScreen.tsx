@@ -21,8 +21,10 @@ import {
 import { api, type SetPatch } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
 import {
+  formatClock,
   formatDuration,
   formatKg,
+  formatSeconds,
   KIND_LABEL,
   relativeDay,
   targetLabel,
@@ -37,6 +39,7 @@ import {
   Button,
   Chip,
   cx,
+  DurationInput,
   Field,
   Input,
   Modal,
@@ -561,7 +564,7 @@ function ExerciseCard({
               <span>#</span>
               <span>{usesLoad ? 'Carga' : ''}</span>
               <span className="text-center">Antes</span>
-              <span className="text-center">{ex.measure === 'time' ? 'Seg' : 'Reps'}</span>
+              <span className="text-center">{ex.measure === 'time' ? 'Tempo' : 'Reps'}</span>
               <span />
             </div>
             {se.sets.map((set) => (
@@ -654,7 +657,7 @@ function LastTime({ se }: { se: SessionExercise }) {
             <li key={s.id} className="flex gap-2">
               <span className="w-7 shrink-0 text-xs leading-5 text-faint">S{s.position + 1}</span>
               <span className="w-14 shrink-0 font-semibold tabular-nums text-starlight">
-                {se.exercise.measure === 'time' ? `${s.seconds ?? '—'}s` : `${s.reps ?? '—'} reps`}
+                {se.exercise.measure === 'time' ? (s.seconds != null ? formatSeconds(s.seconds) : '—') : `${s.reps ?? '—'} reps`}
               </span>
               {s.notes ? <span className="text-dust italic">“{s.notes}”</span> : <span className="text-faint">—</span>}
             </li>
@@ -697,7 +700,8 @@ function SetRowView({
   const prev = se.previous?.sets[set.position];
   const prevVal = prev ? (isTime ? prev.seconds : prev.reps) : null;
   const value = isTime ? set.seconds : set.reps;
-  const placeholder = String(prevVal ?? (isTime ? (se.targetSeconds ?? '') : (se.targetReps ?? '')));
+  const ph = prevVal ?? (isTime ? se.targetSeconds : se.targetReps);
+  const placeholder = ph == null ? '' : isTime ? formatClock(ph) : String(ph);
   const bands = set.bandIds.map((id) => bandById.get(id)).filter((b) => !!b);
 
   return (
@@ -727,18 +731,30 @@ function SetRowView({
         )}
 
         <span className="text-center text-sm text-faint tabular-nums" title={prev ? 'Última vez' : undefined}>
-          {prevVal ?? '—'}
+          {prevVal == null ? '—' : isTime ? formatClock(prevVal) : prevVal}
         </span>
 
         <div className="relative">
-          <NumberInput
-            value={value}
-            onChange={(n) => onLocal(isTime ? { seconds: n } : { reps: n })}
-            onBlur={() => onSave(isTime ? { seconds: value } : { reps: value })}
-            placeholder={placeholder}
-            aria-label={isTime ? 'Segundos' : 'Repetições'}
-            className="px-2 py-2 text-center text-lg font-semibold tabular-nums"
-          />
+          {isTime ? (
+            <DurationInput
+              hint={false}
+              value={value}
+              onChange={(n) => onLocal({ seconds: n })}
+              onBlur={() => onSave({ seconds: value })}
+              placeholder={placeholder}
+              aria-label="Tempo (segundos ou min:seg)"
+              className="px-1 py-2 text-center text-lg font-semibold tabular-nums"
+            />
+          ) : (
+            <NumberInput
+              value={value}
+              onChange={(n) => onLocal({ reps: n })}
+              onBlur={() => onSave({ reps: value })}
+              placeholder={placeholder}
+              aria-label="Repetições"
+              className="px-2 py-2 text-center text-lg font-semibold tabular-nums"
+            />
+          )}
         </div>
 
         <button
@@ -823,7 +839,7 @@ function SetLogModal({
   const prevVal = prev ? (isTime ? prev.seconds : prev.reps) : null;
   const [value, setValue] = useState<number | null>(isTime ? set.seconds : set.reps);
   const [note, setNote] = useState(set.notes ?? '');
-  const unit = isTime ? 's' : ' reps';
+  const fmtVal = (v: number) => (isTime ? formatSeconds(v) : `${v} reps`);
 
   return (
     <Modal
@@ -852,10 +868,7 @@ function SetLogModal({
           </p>
           {prev ? (
             <>
-              <p className="text-lg font-semibold tabular-nums">
-                {prevVal ?? '—'}
-                {prevVal != null && unit}
-              </p>
+              <p className="text-lg font-semibold tabular-nums">{prevVal != null ? fmtVal(prevVal) : '—'}</p>
               {prev.notes ? <p className="text-dust italic">“{prev.notes}”</p> : <p className="text-faint">Sem observação.</p>}
             </>
           ) : (
@@ -863,14 +876,24 @@ function SetLogModal({
           )}
         </div>
 
-        <Field label={isTime ? 'Quanto tempo segurou (segundos)' : 'Quantas repetições fez'}>
-          <NumberInput
-            autoFocus
-            value={value}
-            onChange={setValue}
-            placeholder={String(prevVal ?? (isTime ? (se.targetSeconds ?? '') : (se.targetReps ?? '')))}
-            className="text-center text-2xl font-semibold tabular-nums"
-          />
+        <Field label={isTime ? 'Quanto tempo segurou' : 'Quantas repetições fez'}>
+          {isTime ? (
+            <DurationInput
+              autoFocus
+              value={value}
+              onChange={setValue}
+              placeholder={prevVal != null ? formatClock(prevVal) : se.targetSeconds != null ? formatClock(se.targetSeconds) : ''}
+              className="text-center text-2xl font-semibold tabular-nums"
+            />
+          ) : (
+            <NumberInput
+              autoFocus
+              value={value}
+              onChange={setValue}
+              placeholder={String(prevVal ?? se.targetReps ?? '')}
+              className="text-center text-2xl font-semibold tabular-nums"
+            />
+          )}
         </Field>
 
         <Field label="Como foi">
@@ -1097,7 +1120,7 @@ function RestEdit({ value, onSave }: { value: number; onSave: (n: number | null)
         title="Descanso depois desta série"
         className="inline-flex items-center gap-1 text-faint hover:text-cyan"
       >
-        <Hourglass className="size-3.5" aria-hidden /> {value}s
+        <Hourglass className="size-3.5" aria-hidden /> {formatSeconds(value)}
       </button>
     );
   }
@@ -1108,16 +1131,16 @@ function RestEdit({ value, onSave }: { value: number; onSave: (n: number | null)
   return (
     <span className="inline-flex items-center gap-1 text-faint">
       <Hourglass className="size-3.5" aria-hidden />
-      <NumberInput
+      <DurationInput
         autoFocus
+        hint={false}
         value={v}
         onChange={setV}
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
-        aria-label="Descanso em segundos"
-        className="w-14 px-1.5 py-0.5 text-center text-xs"
+        aria-label="Descanso (segundos ou min:seg)"
+        className="w-16 px-1.5 py-0.5 text-center text-xs"
       />
-      s
     </span>
   );
 }

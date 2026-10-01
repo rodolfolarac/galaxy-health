@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api, type WorkoutItemInput } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
-import { KIND_LABEL, localDay, relativeDay, targetLabel, WEEKDAYS } from '../lib/format';
+import { formatClock, formatSeconds, KIND_LABEL, localDay, relativeDay, targetLabel, WEEKDAYS } from '../lib/format';
 import type { ExerciseKind, Program, Workout } from '../lib/types';
 import { LoadPicker, LoadSummary } from './Load';
 import { EMPTY_GROUP_FILTER, GroupFilter, matchesGroup, type GroupFilterValue } from './MuscleGroups';
@@ -25,6 +25,7 @@ import {
   Button,
   Chip,
   cx,
+  DurationInput,
   EmptyState,
   Field,
   Input,
@@ -350,8 +351,8 @@ function WorkoutEditor({
                       <NumberInput value={it.targetSets} onChange={(n) => update(it.key, { targetSets: n ?? 1, restPerSet: it.restPerSet.slice(0, n ?? 1) })} />
                     </Field>
                     {isTime ? (
-                      <Field label={`Segundos${ex.perSide ? '/lado' : ''}`}>
-                        <NumberInput value={it.targetSeconds} onChange={(n) => update(it.key, { targetSeconds: n })} />
+                      <Field label={`Tempo${ex.perSide ? '/lado' : ''}`}>
+                        <DurationInput value={it.targetSeconds} onChange={(n) => update(it.key, { targetSeconds: n })} />
                       </Field>
                     ) : (
                       <>
@@ -363,8 +364,8 @@ function WorkoutEditor({
                         </Field>
                       </>
                     )}
-                    <Field label="Descanso padrão (s)">
-                      <NumberInput value={it.restSeconds} onChange={(n) => update(it.key, { restSeconds: n })} placeholder={String(ex.restSeconds)} />
+                    <Field label="Descanso padrão">
+                      <DurationInput hint={false} value={it.restSeconds} onChange={(n) => update(it.key, { restSeconds: n })} placeholder={formatClock(ex.restSeconds)} />
                     </Field>
                     <Field label="Bi-set">
                       <Input
@@ -544,11 +545,11 @@ function RestPerSet({
     <div className="mt-2 rounded-xl bg-black/20 p-2.5">
       <div className="mb-1.5 flex items-center justify-between text-xs text-dust">
         <span className="inline-flex items-center gap-1.5">
-          <Timer className="size-3.5" aria-hidden /> Descanso após cada série (s)
+          <Timer className="size-3.5" aria-hidden /> Descanso após cada série
         </span>
         {custom && (
           <button onClick={() => onChange([])} className="text-faint hover:text-starlight">
-            usar {fallback}s em todas
+            usar {formatSeconds(fallback)} em todas
           </button>
         )}
       </div>
@@ -556,10 +557,11 @@ function RestPerSet({
         {Array.from({ length: sets }, (_, i) => (
           <label key={i} className="flex items-center gap-1.5 text-xs text-faint">
             S{i + 1}
-            <NumberInput
+            <DurationInput
+              hint={false}
               value={value[i] ?? null}
               onChange={(n) => set(i, n)}
-              placeholder={String(fallback)}
+              placeholder={formatClock(fallback)}
               className="w-16 px-2 py-1.5 text-center text-sm"
             />
           </label>

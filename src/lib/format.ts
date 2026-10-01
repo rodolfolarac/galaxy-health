@@ -60,11 +60,40 @@ export function formatDuration(ms: number) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** "45s", "1min", "1min30s" — tempo por extenso, para leitura. */
 export function formatSeconds(sec: number) {
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s ? `${m}min${String(s).padStart(2, '0')}` : `${m}min`;
+  const t = Math.max(0, Math.round(sec));
+  if (t < 60) return `${t}s`;
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  return s ? `${m}min${String(s).padStart(2, '0')}s` : `${m}min`;
+}
+
+/** "45" ou "1:30" — forma compacta usada dentro dos campos e em colunas estreitas. */
+export function formatClock(sec: number) {
+  const t = Math.max(0, Math.round(sec));
+  if (t < 60) return String(t);
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Lê uma duração digitada. Aceita segundos ("90"), minutos:segundos ("1:30",
+ * "1,30"), fração de minuto ("1,5" = 90 s) e por extenso ("1m30", "2min",
+ * "45s").
+ * Devolve null para vazio e undefined para texto que não é duração.
+ */
+export function parseDuration(raw: string): number | null | undefined {
+  const t = raw.trim().toLowerCase().replace(/\s+/g, '');
+  if (!t) return null;
+  if (/^\d+$/.test(t)) return Number(t);
+  // "1,5" / "1.5" = 1 minuto e meio; "1,30" / "1:30" / "1:5" = minutos e segundos.
+  let m = t.match(/^(\d+)[.,](\d)$/);
+  if (m) return Math.round((Number(m[1]) + Number(m[2]) / 10) * 60);
+  m = t.match(/^(\d+)[:.,](\d{1,2})$/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  m = t.match(/^(?:(\d+)(?:min|m))?(?:(\d+)(?:s|seg)?)?$/);
+  if (m && (m[1] || m[2])) return Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0);
+  return undefined;
 }
 
 export function formatKg(kg: number | null | undefined) {

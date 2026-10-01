@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, History, Timer, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
-import { formatSeconds, relativeDay, relativeTime } from '../lib/format';
+import { formatClock, formatSeconds, relativeDay, relativeTime } from '../lib/format';
 import { alertDone, useCountdown, useWakeLock } from '../lib/timers';
 import type { QuickContext } from '../lib/types';
-import { Button, cx, Field, Modal, Notice, NumberInput, Spinner, Textarea } from './ui';
+import { Button, cx, DurationInput, Field, Modal, Notice, NumberInput, Spinner, Textarea } from './ui';
 
 /**
  * Registra UMA série de um exercício do treino, sem abrir o treino inteiro.
@@ -110,7 +110,7 @@ export function QuickLogModal({
                 className={cx(timer.running && 'border-amber/60 text-amber')}
               >
                 <Timer className="size-4" aria-hidden />
-                {timer.running ? `${timer.left}s · parar` : 'Iniciar timer'}
+                {timer.running ? `${formatClock(timer.left)} · parar` : 'Iniciar timer'}
               </Button>
             )}
             <Button className="ml-auto" disabled={busy || timer.running} onClick={() => save()}>
@@ -175,16 +175,16 @@ export function QuickLogModal({
           {timer.running ? (
             <div className="rounded-2xl border border-amber/40 bg-amber/10 py-6 text-center">
               <p className="text-xs text-amber">Segurando…</p>
-              <p className="text-5xl font-semibold tabular-nums">{timer.left}s</p>
+              <p className="text-5xl font-semibold tabular-nums">{timer.left < 60 ? `${timer.left}s` : formatClock(timer.left)}</p>
               <p className="mt-1 text-xs text-dust">Ao terminar, a série é registrada sozinha.</p>
             </div>
           ) : (
-            <Field label={isTime ? 'Quanto tempo (segundos)' : 'Quantas repetições'}>
-              <NumberInput
-                value={value}
-                onChange={setValue}
-                className="text-center text-2xl font-semibold tabular-nums"
-              />
+            <Field label={isTime ? 'Quanto tempo' : 'Quantas repetições'}>
+              {isTime ? (
+                <DurationInput value={value} onChange={setValue} className="text-center text-2xl font-semibold tabular-nums" />
+              ) : (
+                <NumberInput value={value} onChange={setValue} className="text-center text-2xl font-semibold tabular-nums" />
+              )}
             </Field>
           )}
 

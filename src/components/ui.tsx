@@ -8,6 +8,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { X } from 'lucide-react';
+import { formatClock, formatSeconds, parseDuration } from '../lib/format';
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(' ');
@@ -316,6 +317,69 @@ export function NumberInput({
       className={className}
       {...rest}
     />
+  );
+}
+
+/**
+ * Campo de tempo: digite em segundos ("90") ou em minutos ("1:30", "1,30",
+ * "1m30"). Ao sair do campo, de 60 s para cima ele mostra em minutos
+ * ("1:30"). O valor guardado é sempre em segundos.
+ */
+export function DurationInput({
+  value,
+  onChange,
+  hint = true,
+  className,
+  onBlur,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & {
+  value: number | null | undefined;
+  onChange: (seconds: number | null) => void;
+  /** Mostra "= 1 min 30 s" embaixo enquanto digita. */
+  hint?: boolean;
+}) {
+  const show = (v: number | null | undefined) => (v == null ? '' : formatClock(v));
+  const [text, setText] = useState(show(value));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    // Valor mudou por fora (ex.: timer preencheu): reflete no campo.
+    if (!focused && parseDuration(text) !== (value ?? null)) setText(show(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  const parsed = parseDuration(text);
+
+  return (
+    <span className="block">
+      <Input
+        inputMode="decimal"
+        value={text}
+        onFocus={() => setFocused(true)}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (!/^[\d:.,\smins]*$/i.test(raw)) return;
+          setText(raw);
+          const n = parseDuration(raw);
+          if (n !== undefined) onChange(n);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          const n = parseDuration(text);
+          setText(show(n === undefined ? value : n));
+          onBlur?.(e);
+        }}
+        className={className}
+        {...rest}
+      />
+      {hint && (
+        <span className={cx('mt-1 block text-xs', parsed === undefined ? 'text-rose-300' : 'text-faint')}>
+          {parsed === undefined
+            ? 'Use segundos (90) ou minutos (1:30)'
+            : parsed != null && parsed >= 60
+              ? `= ${formatSeconds(parsed).replace('min', ' min ').replace(/s$/, ' s').trim()}`
+              : 'segundos ou min:seg'}
+        </span>
+      )}
+    </span>
   );
 }
 

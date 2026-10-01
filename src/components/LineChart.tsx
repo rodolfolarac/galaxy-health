@@ -12,9 +12,12 @@ export function LineChart({
   unit = '',
   height = 180,
   color = 'var(--color-nebula-soft)',
+  format,
 }: {
   points: Point[];
   unit?: string;
+  /** Formata os valores (ex.: segundos → "1min30s"); substitui número + unidade. */
+  format?: (v: number) => string;
   height?: number;
   color?: string;
 }) {
@@ -44,7 +47,9 @@ export function LineChart({
     points.length === 1 ? (pad.l + W - pad.r) / 2 : pad.l + (i / (points.length - 1)) * (W - pad.l - pad.r);
   const y = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
   const ticks = [lo, (lo + hi) / 2, hi];
-  const fmt = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: v < 10 ? 1 : 0 });
+  const num = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: v < 10 ? 1 : 0 });
+  const fmt = format ?? num;
+  const u = format ? '' : unit;
   const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
 
   function onMove(clientX: number) {
@@ -67,7 +72,7 @@ export function LineChart({
         viewBox={`0 0 ${W} ${H}`}
         className="w-full touch-pan-y"
         role="img"
-        aria-label={`Evolução: de ${fmt(points[0]!.value)}${unit} para ${fmt(points[points.length - 1]!.value)}${unit}`}
+        aria-label={`Evolução: de ${fmt(points[0]!.value)}${u} para ${fmt(points[points.length - 1]!.value)}${u}`}
         onMouseMove={(e) => onMove(e.clientX)}
         onMouseLeave={() => setHover(null)}
         onTouchStart={(e) => onMove(e.touches[0]!.clientX)}
@@ -119,7 +124,7 @@ export function LineChart({
           <p className="text-dust">{h.label}</p>
           <p className="text-sm font-semibold text-starlight">
             {fmt(h.value)}
-            {unit}
+            {u}
           </p>
           {h.detail && <p className="text-faint">{h.detail}</p>}
         </div>
