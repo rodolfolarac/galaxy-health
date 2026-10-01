@@ -8,15 +8,15 @@ import {
   ExternalLink,
   History,
   Hourglass,
-  MessageSquareText,
   Plus,
   RotateCcw,
   SkipForward,
   Timer,
+  TimerOff,
+  NotebookPen,
   Trash2,
   TrendingUp,
   Trophy,
-  X,
 } from 'lucide-react';
 import { api, type SetPatch } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
@@ -27,7 +27,7 @@ import {
   relativeDay,
   targetLabel,
 } from '../lib/format';
-import { useCountdown, useStopwatch } from '../lib/timers';
+import { alertDone, useCountdown, useLocalFlag, useStopwatch, useWakeLock } from '../lib/timers';
 import type { Comparison, ExerciseKind, SessionExercise, SessionFull, SetRow } from '../lib/types';
 import { ComparisonView } from './ComparisonView';
 import { BandSwatch, groupSetsByLoad, LoadPicker, LoadSummary, type LoadValue } from './Load';
@@ -59,8 +59,28 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
   const [finishing, setFinishing] = useState(false);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [adding, setAdding] = useState(false);
-  const rest = useCountdown();
   const pending = useRef(0);
+  /** Descanso automático ao marcar a série. Desligue se prefere controlar sem timer. */
+  const [autoRest, setAutoRest] = useLocalFlag('gh:autoRest', true);
+  /** O que o timer está contando agora: descanso ou execução de uma série por tempo. */
+  const [timerInfo, setTimerInfo] = useState<
+    { kind: 'rest'; label: string } | { kind: 'work'; label: string; seId: number; setId: number; secs: number } | null
+  >(null);
+  const timerInfoRef = useRef(timerInfo);
+  timerInfoRef.current = timerInfo;
+  const fullRef = useRef<SessionFull | null>(null);
+  const timer = useCountdown(() => {
+    const info = timerInfoRef.current;
+    alertDone(info?.kind ?? 'rest');
+    setTimerInfo(null);
+    if (info?.kind !== 'work') return;
+    // Fim da isometria: a série é registrada com o tempo feito e o descanso começa.
+    const se = fullRef.current?.exercises.find((x) => x.id === info.seId);
+    const set = se?.sets.find((x) => x.id === info.setId);
+    if (se && set && !set.done) {
+      void saveSet(se, set, { seconds: set.seconds ?? info.secs, done: true }).then(() => startRest(se, set));
+    }
+  });
 
   useEffect(() => {
     api
@@ -91,6 +111,8 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
   }, []);
 
   const active = full?.session.status === 'active';
+  fullRef.current = full;
+  useWakeLock(!!active);
   const timing = sessionTiming(full);
   const elapsed = useStopwatch(full?.session.durationMs ?? 0);
   const elapsedRef = useRef(elapsed);
@@ -138,10 +160,28 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
       }
     }
     await saveSet(se, set, patch);
-    if (done && active) {
-      const secs = set.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds;
-      if (secs > 0) rest.start(secs);
-    }
+    if (done) startRest(se, set);
+  }
+
+  /** Registro pelo botão "Registrar série": salva tudo e, se acabou de ficar feita, começa o descanso. */
+  async function registerSet(se: SessionExercise, set: SetRow, patch: SetPatch) {
+    const wasDone = set.done;
+    await saveSet(se, set, patch);
+    if (patch.done && !wasDone) startRest(se, set);
+  }
+
+  function startRest(se: SessionExercise, set: SetRow) {
+    if (!active || !autoRest) return;
+    const secs = set.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds;
+    if (secs <= 0) return;
+    const isLast = set.position === se.sets.length - 1;
+    setTimerInfo({ kind: 'rest', label: isLast ? 'Descanso · próximo exercício' : `Descanso · depois vem a série ${set.position + 2}` });
+    timer.start(secs);
+  }
+
+  function startWork(se: SessionExercise, set: SetRow, secs: number) {
+    setTimerInfo({ kind: 'work', label: `${se.exercise.name} · série ${set.position + 1}`, seId: se.id, setId: set.id, secs });
+    timer.start(secs);
   }
 
   async function applyLoad(se: SessionExercise, set: SetRow, v: LoadValue, scope: 'one' | 'rest') {
@@ -178,7 +218,8 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
     const s2 = await persist(() => api.finishSession(sessionId, status, active ? elapsedRef.current : full!.session.durationMs));
     if (!s2) return;
     setFinishing(false);
-    rest.stop();
+    timer.stop();
+    setTimerInfo(null);
     if (status === 'aborted') return onClose();
     const [fresh, cmp] = await Promise.all([api.session(sessionId), api.compare(sessionId)]);
     setFull(fresh);
@@ -221,6 +262,20 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
               {save === 'idle' && full && <span className="text-faint">salvo</span>}
             </p>
           </div>
+          {full && active && (
+            <button
+              onClick={() => {
+                setAutoRest(!autoRest);
+                setToast({ text: autoRest ? 'Descanso automático desligado.' : 'Descanso automático ligado.', tone: 'info' });
+              }}
+              aria-pressed={autoRest}
+              aria-label={autoRest ? 'Desligar descanso automático' : 'Ligar descanso automático'}
+              title={autoRest ? 'Descanso automático ligado' : 'Descanso automático desligado'}
+              className={cx('rounded-lg p-2 transition-colors', autoRest ? 'text-cyan hover:bg-white/6' : 'text-faint hover:bg-white/6')}
+            >
+              {autoRest ? <Timer className="size-5" aria-hidden /> : <TimerOff className="size-5" aria-hidden />}
+            </button>
+          )}
           {full && active && (
             <Button size="sm" onClick={() => setFinishing(true)}>
               <Check className="size-4" aria-hidden /> Encerrar
@@ -295,7 +350,8 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
                   onNotes={(notes) => setSeField(se, { notes })}
                   onSkip={() => setSeField(se, { status: se.status === 'skipped' ? 'pending' : 'skipped' })}
                   onRemove={() => removeExercise(se)}
-                  onTimer={(secs) => rest.start(secs)}
+                  onWork={(set, secs) => startWork(se, set, secs)}
+                  onRegister={(set, patch) => registerSet(se, set, patch)}
                 />
               ))}
 
@@ -318,26 +374,42 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
         </div>
       </div>
 
-      {/* Descanso entre séries */}
-      {rest.running && (
-        <div className="safe-bottom fixed inset-x-0 bottom-0 z-50 border-t border-cyan/30 bg-deep/95 pt-3 backdrop-blur-xl">
+      {/* Timer: descanso entre séries (ciano) ou execução de série por tempo (âmbar) */}
+      {timer.running && (
+        <div
+          className={cx(
+            'safe-bottom fixed inset-x-0 bottom-0 z-50 border-t bg-deep/95 pt-3 backdrop-blur-xl',
+            timerInfo?.kind === 'work' ? 'border-amber/40' : 'border-cyan/30',
+          )}
+        >
           <div className="mx-auto flex max-w-3xl items-center gap-3 px-4">
-            <Timer className="size-5 text-cyan" aria-hidden />
-            <div className="flex-1">
-              <p className="text-xs text-dust">Descanso</p>
-              <p className="text-2xl font-semibold tabular-nums">{formatDuration(rest.left * 1000)}</p>
+            {timerInfo?.kind === 'work' ? (
+              <Hourglass className="size-5 text-amber" aria-hidden />
+            ) : (
+              <Timer className="size-5 text-cyan" aria-hidden />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs text-dust">{timerInfo?.label ?? 'Descanso'}</p>
+              <p className="text-2xl font-semibold tabular-nums">{formatDuration(timer.left * 1000)}</p>
               <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10">
                 <div
-                  className="h-full rounded-full bg-cyan transition-[width] duration-300"
-                  style={{ width: `${rest.total ? (rest.left / rest.total) * 100 : 0}%` }}
+                  className={cx('h-full rounded-full transition-[width] duration-300', timerInfo?.kind === 'work' ? 'bg-amber' : 'bg-cyan')}
+                  style={{ width: `${timer.total ? (timer.left / timer.total) * 100 : 0}%` }}
                 />
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => rest.add(15)}>
+            <Button variant="outline" size="sm" onClick={() => timer.add(15)}>
               +15s
             </Button>
-            <Button variant="ghost" size="sm" onClick={rest.stop}>
-              Pronto
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                timer.stop();
+                setTimerInfo(null);
+              }}
+            >
+              {timerInfo?.kind === 'work' ? 'Parar' : 'Pronto'}
             </Button>
           </div>
         </div>
@@ -346,7 +418,7 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
       {toast && (
         <Toast tone={toast.tone} onDone={() => setToast(null)}>
           <span className="flex items-center gap-2">
-            <Trophy className="size-4" aria-hidden /> {toast.text}
+            {toast.tone === 'record' && <Trophy className="size-4" aria-hidden />} {toast.text}
           </span>
         </Toast>
       )}
@@ -384,7 +456,8 @@ function ExerciseCard({
   onNotes,
   onSkip,
   onRemove,
-  onTimer,
+  onWork,
+  onRegister,
 }: {
   index: number;
   se: SessionExercise;
@@ -397,7 +470,8 @@ function ExerciseCard({
   onNotes: (notes: string | null) => void;
   onSkip: () => void;
   onRemove: () => void;
-  onTimer: (secs: number) => void;
+  onWork: (set: SetRow, secs: number) => void;
+  onRegister: (set: SetRow, patch: SetPatch) => void;
 }) {
   const { groupLabel } = useCatalog();
   const ex = se.exercise;
@@ -501,7 +575,8 @@ function ExerciseCard({
                 onLocal={(p) => onLocalSet(set, p)}
                 onSave={(p) => onSaveSet(set, p)}
                 onRemove={() => onRemoveSet(set)}
-                onTimer={onTimer}
+                onWork={(secs) => onWork(set, secs)}
+                onRegister={(p) => onRegister(set, p)}
               />
             ))}
           </div>
@@ -572,16 +647,19 @@ function LastTime({ se }: { se: SessionExercise }) {
           </div>
         ))}
       </div>
+      {/* Série a série, com o que foi anotado: "S1 · 12 reps — consegui 12 cansando pouco". */}
       {p.sets.some((s) => s.notes) && (
-        <ul className="mt-1.5 space-y-0.5 text-xs text-dust">
-          {p.sets
-            .filter((s) => s.notes)
-            .map((s) => (
-              <li key={s.id}>
-                Série {s.position + 1}: {s.notes}
-              </li>
-            ))}
-        </ul>
+        <ol className="mt-2 space-y-1 border-t border-nebula-soft/20 pt-2 text-sm">
+          {p.sets.map((s) => (
+            <li key={s.id} className="flex gap-2">
+              <span className="w-7 shrink-0 text-xs leading-5 text-faint">S{s.position + 1}</span>
+              <span className="w-14 shrink-0 font-semibold tabular-nums text-starlight">
+                {se.exercise.measure === 'time' ? `${s.seconds ?? '—'}s` : `${s.reps ?? '—'} reps`}
+              </span>
+              {s.notes ? <span className="text-dust italic">“{s.notes}”</span> : <span className="text-faint">—</span>}
+            </li>
+          ))}
+        </ol>
       )}
       {p.notes && <p className="mt-1.5 text-sm text-dust italic">“{p.notes}”</p>}
     </div>
@@ -596,8 +674,9 @@ function SetRowView({
   onToggleDone,
   onLocal,
   onSave,
+  onRegister,
   onRemove,
-  onTimer,
+  onWork,
 }: {
   se: SessionExercise;
   set: SetRow;
@@ -606,12 +685,14 @@ function SetRowView({
   onToggleDone: () => void;
   onLocal: (p: Partial<SetRow>) => void;
   onSave: (p: SetPatch) => void;
+  /** Registro pelo botão: reps/tempo + observação, já marcando a série como feita. */
+  onRegister: (p: SetPatch) => void;
   onRemove: () => void;
-  onTimer: (secs: number) => void;
+  /** Inicia o timer de execução (exercícios por tempo). */
+  onWork: (secs: number) => void;
 }) {
   const { bandById } = useCatalog();
-  const [showNote, setShowNote] = useState(!!set.notes);
-  const [note, setNote] = useState(set.notes ?? '');
+  const [logging, setLogging] = useState(false);
   const isTime = se.exercise.measure === 'time';
   const prev = se.previous?.sets[set.position];
   const prevVal = prev ? (isTime ? prev.seconds : prev.reps) : null;
@@ -673,9 +754,19 @@ function SetRowView({
         </button>
       </div>
 
-      <div className="flex items-center gap-3 px-2 pb-1.5 text-xs">
-        <button onClick={() => setShowNote((s) => !s)} className={cx('inline-flex items-center gap-1', set.notes ? 'text-nebula-soft' : 'text-faint hover:text-dust')}>
-          <MessageSquareText className="size-3.5" aria-hidden /> {set.notes ? 'obs' : 'anotar'}
+      {/* Observação da série, sempre visível depois de escrita. Toque para editar. */}
+      {set.notes && (
+        <button onClick={() => setLogging(true)} className="block w-full px-3 pb-1 text-left text-sm text-starlight/90 italic hover:text-starlight">
+          “{set.notes}”
+        </button>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1.5 text-xs">
+        <button
+          onClick={() => setLogging(true)}
+          className="inline-flex items-center gap-1 rounded-lg border border-nebula-soft/40 px-2 py-1 text-nebula-soft hover:bg-nebula/15"
+        >
+          <NotebookPen className="size-3.5" aria-hidden /> {set.done || set.notes ? 'Editar registro' : 'Registrar série'}
         </button>
         <RestEdit
           value={set.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds}
@@ -683,30 +774,115 @@ function SetRowView({
         />
         {isTime && (
           <button
-            onClick={() => onTimer(set.seconds ?? se.targetSeconds ?? se.exercise.defaultSeconds ?? 30)}
+            onClick={() => onWork(set.seconds ?? se.targetSeconds ?? se.exercise.defaultSeconds ?? 30)}
             className="inline-flex items-center gap-1 text-faint hover:text-cyan"
           >
-            <Timer className="size-3.5" aria-hidden /> timer
-          </button>
-        )}
-        {showNote && (
-          <button onClick={onRemove} className="ml-auto inline-flex items-center gap-1 text-faint hover:text-rose-300">
-            <X className="size-3.5" aria-hidden /> apagar série
+            <Timer className="size-3.5" aria-hidden /> iniciar timer
           </button>
         )}
       </div>
-      {showNote && (
-        <div className="px-2 pb-2">
-          <Input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            onBlur={() => note !== (set.notes ?? '') && onSave({ notes: note.trim() || null })}
-            placeholder="Obs. desta série (ex.: última rep com ajuda, cotovelo abriu)"
-            className="py-2 text-sm"
-          />
-        </div>
+
+      {logging && (
+        <SetLogModal
+          se={se}
+          set={set}
+          onClose={() => setLogging(false)}
+          onSave={(p) => {
+            setLogging(false);
+            onRegister(p);
+          }}
+          onRemove={() => {
+            setLogging(false);
+            onRemove();
+          }}
+        />
       )}
     </div>
+  );
+}
+
+/**
+ * Registrar uma série sem depender de timer: quanto fez e como foi
+ * ("consegui 12 cansando pouco"), com o que fez da última vez ao lado.
+ */
+function SetLogModal({
+  se,
+  set,
+  onClose,
+  onSave,
+  onRemove,
+}: {
+  se: SessionExercise;
+  set: SetRow;
+  onClose: () => void;
+  onSave: (p: SetPatch) => void;
+  onRemove: () => void;
+}) {
+  const isTime = se.exercise.measure === 'time';
+  const prev = se.previous?.sets[set.position];
+  const prevVal = prev ? (isTime ? prev.seconds : prev.reps) : null;
+  const [value, setValue] = useState<number | null>(isTime ? set.seconds : set.reps);
+  const [note, setNote] = useState(set.notes ?? '');
+  const unit = isTime ? 's' : ' reps';
+
+  return (
+    <Modal
+      title={`${se.exercise.name} · série ${set.position + 1}`}
+      onClose={onClose}
+      footer={
+        <div className="flex items-center gap-2 pb-1">
+          <Button variant="ghost" onClick={onRemove} className="text-faint">
+            <Trash2 className="size-4" aria-hidden /> Apagar série
+          </Button>
+          <Button
+            className="ml-auto"
+            onClick={() =>
+              onSave({ ...(isTime ? { seconds: value } : { reps: value }), notes: note.trim() || null, done: true })
+            }
+          >
+            <Check className="size-4" aria-hidden /> Salvar série
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div className="rounded-xl border border-nebula-soft/30 bg-nebula/10 px-3 py-2.5 text-sm">
+          <p className="mb-1 text-xs font-medium tracking-wide text-nebula-soft uppercase">
+            Última vez{se.previous ? ` · ${relativeDay(se.previous.day)}` : ''}
+          </p>
+          {prev ? (
+            <>
+              <p className="text-lg font-semibold tabular-nums">
+                {prevVal ?? '—'}
+                {prevVal != null && unit}
+              </p>
+              {prev.notes ? <p className="text-dust italic">“{prev.notes}”</p> : <p className="text-faint">Sem observação.</p>}
+            </>
+          ) : (
+            <p className="text-faint">Sem registro desta série ainda.</p>
+          )}
+        </div>
+
+        <Field label={isTime ? 'Quanto tempo segurou (segundos)' : 'Quantas repetições fez'}>
+          <NumberInput
+            autoFocus
+            value={value}
+            onChange={setValue}
+            placeholder={String(prevVal ?? (isTime ? (se.targetSeconds ?? '') : (se.targetReps ?? '')))}
+            className="text-center text-2xl font-semibold tabular-nums"
+          />
+        </Field>
+
+        <Field label="Como foi">
+          <Textarea
+            rows={3}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Ex.: consegui fazer 12 cansando pouco"
+          />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 

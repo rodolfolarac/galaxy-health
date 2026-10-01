@@ -168,6 +168,18 @@ function Side({
         {isTime ? ` · ${block.perf.totalSeconds}s no total` : ` · ${block.perf.totalReps} reps`}
         {block.perf.maxLoad != null && ` · máx ≈ ${formatKg(block.perf.maxLoad)}`}
       </p>
+      {block.sets.some((s) => s.notes) && (
+        <ol className="mt-1.5 space-y-0.5">
+          {block.sets
+            .filter((s) => s.notes)
+            .map((s) => (
+              <li key={s.id} className="text-dust">
+                <span className="text-xs text-faint">S{s.position + 1} · {isTime ? `${s.seconds}s` : `${s.reps} reps`} — </span>
+                <span className="italic">“{s.notes}”</span>
+              </li>
+            ))}
+        </ol>
+      )}
       {block.notes && <p className="mt-1 text-dust italic">“{block.notes}”</p>}
     </div>
   );
