@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dumbbell, ExternalLink, Pencil, Plus, Search, Trash2, Trophy, X } from 'lucide-react';
+import { Check, Dumbbell, ExternalLink, FolderInput, Pencil, Plus, Search, Trash2, Trophy, X } from 'lucide-react';
 import { api, type ExerciseInput } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
 import {
@@ -13,6 +13,7 @@ import {
 import type { Exercise, ExerciseKind, HistoryEntry, RecordRow, VideoLink } from '../lib/types';
 import { LineChart, type Point } from './LineChart';
 import { LoadPicker, LoadSummary } from './Load';
+import { EMPTY_GROUP_FILTER, GroupFilter, GroupPicker, matchesGroup, type GroupFilterValue } from './MuscleGroups';
 import {
   Button,
   Chip,
@@ -32,25 +33,35 @@ import {
 } from './ui';
 
 export function ExercisesView() {
-  const { exercises, refresh } = useCatalog();
+  const { exercises, refresh, groupById, groupLabel } = useCatalog();
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<ExerciseKind | ''>('');
-  const [muscle, setMuscle] = useState('');
+  const [group, setGroup] = useState<GroupFilterValue>(EMPTY_GROUP_FILTER);
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<Exercise | 'new' | null>(null);
   const [detail, setDetail] = useState<Exercise | null>(null);
+  /** Modo de seleção para mover vários exercícios de grupo de uma vez. */
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [moveTo, setMoveTo] = useState<number | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const muscles = useMemo(
-    () => [...new Set(exercises.map((e) => e.muscleGroup).filter((m): m is string => !!m))].sort(),
-    [exercises],
-  );
   const list = exercises.filter(
     (e) =>
       (showArchived || !e.archived) &&
       (!kind || e.kind === kind) &&
-      (!muscle || e.muscleGroup === muscle) &&
+      matchesGroup(e, group, groupById) &&
       e.name.toLowerCase().includes(q.trim().toLowerCase()),
   );
+
+  async function applyMove() {
+    if (!selected.length) return;
+    const r = await api.bulkGroup(selected, moveTo);
+    await refresh(['exercises', 'groups']);
+    setMsg(`${r.updated} exercício${r.updated > 1 ? 's' : ''} movido${r.updated > 1 ? 's' : ''} para ${groupLabel(moveTo) ?? 'sem grupo'}.`);
+    setSelected([]);
+    setSelecting(false);
+  }
 
   return (
     <div>
@@ -78,15 +89,47 @@ export function ExercisesView() {
               </option>
             ))}
           </Select>
-          {muscles.length > 0 && (
-            <Select value={muscle} onChange={(e) => setMuscle(e.target.value)} className="w-auto">
-              <option value="">Todos os grupos</option>
-              {muscles.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </Select>
-          )}
+          <GroupFilter value={group} onChange={setGroup} className="contents" />
+          <Button
+            variant={selecting ? 'primary' : 'ghost'}
+            onClick={() => {
+              setSelecting((s) => !s);
+              setSelected([]);
+              setMsg(null);
+            }}
+          >
+            <FolderInput className="size-4" aria-hidden /> {selecting ? 'Cancelar seleção' : 'Organizar'}
+          </Button>
         </div>
+      )}
+
+      {msg && (
+        <div className="mb-3">
+          <Notice tone="info">{msg}</Notice>
+        </div>
+      )}
+
+      {selecting && (
+        <Panel className="sticky top-16 z-20 mb-3 flex flex-wrap items-center gap-2 p-3">
+          <span className="text-sm text-dust">
+            {selected.length} selecionado{selected.length === 1 ? '' : 's'}
+          </span>
+          <button
+            className="text-sm text-nebula-soft hover:underline"
+            onClick={() => setSelected(selected.length === list.length ? [] : list.map((e) => e.id))}
+          >
+            {selected.length === list.length ? 'Limpar' : 'Selecionar todos os filtrados'}
+          </button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <span className="text-sm text-dust">Mover para</span>
+            <div className="min-w-56">
+              <GroupPicker value={moveTo} onChange={setMoveTo} />
+            </div>
+            <Button onClick={applyMove} disabled={!selected.length}>
+              Mover
+            </Button>
+          </div>
+        </Panel>
       )}
 
       {!exercises.length ? (
@@ -103,13 +146,35 @@ export function ExercisesView() {
           {list.map((e) => (
             <button
               key={e.id}
-              onClick={() => setDetail(e)}
-              className={cx('glass rounded-2xl p-4 text-left transition-colors hover:border-nebula-soft/50', e.archived && 'opacity-55')}
+              onClick={() =>
+                selecting
+                  ? setSelected((s) => (s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id]))
+                  : setDetail(e)
+              }
+              aria-pressed={selecting ? selected.includes(e.id) : undefined}
+              className={cx(
+                'glass rounded-2xl p-4 text-left transition-colors hover:border-nebula-soft/50',
+                e.archived && 'opacity-55',
+                selecting && selected.includes(e.id) && 'border-nebula-soft bg-nebula/20',
+              )}
             >
-              <p className="font-medium">{e.name}</p>
+              <p className="flex items-start gap-2 font-medium">
+                {selecting && (
+                  <span
+                    aria-hidden
+                    className={cx(
+                      'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border',
+                      selected.includes(e.id) ? 'border-nebula-soft bg-nebula text-white' : 'border-ridge',
+                    )}
+                  >
+                    {selected.includes(e.id) && <Check className="size-3.5" />}
+                  </span>
+                )}
+                {e.name}
+              </p>
               <p className="mt-0.5 text-xs text-dust">
                 {KIND_LABEL[e.kind as ExerciseKind]}
-                {e.muscleGroup && ` · ${e.muscleGroup}`}
+                {groupLabel(e.muscleGroupId) && ` · ${groupLabel(e.muscleGroupId)}`}
                 {e.perSide && ' · por lado'}
                 {e.archived && ' · arquivado'}
               </p>
@@ -181,7 +246,7 @@ export function ExerciseEditor({
           defaultBandIds: [],
           defaultSetup: '',
           videos: [],
-          muscleGroup: '',
+          muscleGroupId: null,
           instructions: '',
           notes: '',
         },
@@ -204,7 +269,7 @@ export function ExerciseEditor({
     const body: ExerciseInput = {
       name: f.name.trim(),
       kind: f.kind,
-      muscleGroup: f.muscleGroup?.trim() || null,
+      muscleGroupId: f.muscleGroupId ?? null,
       equipment: f.equipment,
       measure: f.measure,
       perSide: !!f.perSide,
@@ -262,10 +327,11 @@ export function ExerciseEditor({
           />
         </Field>
 
+        <Field group label="Grupo muscular e subcategoria">
+          <GroupPicker value={f.muscleGroupId} onChange={(muscleGroupId) => set({ muscleGroupId })} />
+        </Field>
+
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Grupo muscular / região">
-            <Input value={f.muscleGroup ?? ''} onChange={(e) => set({ muscleGroup: e.target.value })} placeholder="Bíceps, posterior de coxa…" />
-          </Field>
           <Field label="Equipamento">
             <Select value={f.equipment} onChange={(e) => set({ equipment: e.target.value })}>
               {Object.entries(EQUIPMENT_LABEL).map(([k, l]) => (
@@ -381,6 +447,7 @@ function ExerciseDetail({
   onEdit: () => void;
   onDeleted: () => void;
 }) {
+  const { groupLabel } = useCatalog();
   const [data, setData] = useState<{ entries: HistoryEntry[]; records: RecordRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isTime = e.measure === 'time';
@@ -452,7 +519,7 @@ function ExerciseDetail({
       <div className="space-y-6">
         <div className="flex flex-wrap gap-1.5">
           <Chip>{KIND_LABEL[e.kind as ExerciseKind]}</Chip>
-          {e.muscleGroup && <Chip>{e.muscleGroup}</Chip>}
+          {groupLabel(e.muscleGroupId) && <Chip>{groupLabel(e.muscleGroupId)}</Chip>}
           <Chip>{EQUIPMENT_LABEL[e.equipment]}</Chip>
           {e.perSide && <Chip>por lado</Chip>}
         </div>

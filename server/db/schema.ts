@@ -8,6 +8,7 @@ import {
   boolean,
   jsonb,
   index,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 export type VideoLink = { url: string; label?: string | null };
@@ -33,6 +34,22 @@ export const bands = pgTable('bands', {
 });
 
 /**
+ * Grupo muscular (parentId nulo) ou subcategoria de um grupo (parentId =
+ * grupo). Ex.: Peitoral → Peitoral superior. Tudo cadastrável pelo app.
+ */
+export const muscleGroups = pgTable(
+  'muscle_groups',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    parentId: integer('parent_id').references((): AnyPgColumn => muscleGroups.id, { onDelete: 'cascade' }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('muscle_groups_parent_idx').on(t.parentId)],
+);
+
+/**
  * Exercício do acervo. `kind` separa força, alongamento, mobilidade e
  * peso do corpo; `measure` diz se a série é contada em repetições ou em
  * segundos; `perSide` indica que a contagem é por lado.
@@ -44,7 +61,10 @@ export const exercises = pgTable(
     name: text('name').notNull(),
     /** 'strength' | 'stretch' | 'mobility' | 'bodyweight' | 'cardio' */
     kind: text('kind').notNull().default('strength'),
+    /** Legado (texto livre). Substituído por muscleGroupId; mantido só para a migração. */
     muscleGroup: text('muscle_group'),
+    /** Grupo ou subcategoria. Excluir a subcategoria deixa o exercício sem grupo. */
+    muscleGroupId: integer('muscle_group_id').references(() => muscleGroups.id, { onDelete: 'set null' }),
     /** 'band' | 'bodyweight' | 'other' */
     equipment: text('equipment').notNull().default('band'),
     /** 'reps' | 'time' */
@@ -103,6 +123,8 @@ export const workoutItems = pgTable(
     targetRepsMax: integer('target_reps_max'),
     targetSeconds: integer('target_seconds'),
     restSeconds: integer('rest_seconds'),
+    /** Descanso de cada série (posição → segundos). Vazio = restSeconds em todas. */
+    restPerSet: jsonb('rest_per_set').$type<(number | null)[]>().notNull().default([]),
     /** Itens com o mesmo rótulo formam um bi-set / tri-set. */
     supersetGroup: text('superset_group'),
     bandIds: jsonb('band_ids').$type<number[]>().notNull().default([]),
@@ -211,6 +233,8 @@ export const sets = pgTable(
     setup: text('setup'),
     adjustPct: real('adjust_pct'),
     loadKg: real('load_kg'),
+    /** Descanso depois desta série, em segundos (vem da ficha; editável no treino). */
+    restSeconds: integer('rest_seconds'),
     rpe: integer('rpe'),
     notes: text('notes'),
     done: boolean('done').notNull().default(false),
@@ -265,6 +289,7 @@ export const loginAttempts = pgTable('login_attempts', {
 });
 
 export type Band = typeof bands.$inferSelect;
+export type MuscleGroup = typeof muscleGroups.$inferSelect;
 export type Exercise = typeof exercises.$inferSelect;
 export type Workout = typeof workouts.$inferSelect;
 export type WorkoutItem = typeof workoutItems.$inferSelect;

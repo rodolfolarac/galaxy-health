@@ -3,9 +3,11 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  Clock,
   CircleAlert,
   ExternalLink,
   History,
+  Hourglass,
   MessageSquareText,
   Plus,
   RotateCcw,
@@ -29,6 +31,8 @@ import { useCountdown, useStopwatch } from '../lib/timers';
 import type { Comparison, ExerciseKind, SessionExercise, SessionFull, SetRow } from '../lib/types';
 import { ComparisonView } from './ComparisonView';
 import { BandSwatch, groupSetsByLoad, LoadPicker, LoadSummary, type LoadValue } from './Load';
+import { EMPTY_GROUP_FILTER, GroupFilter, matchesGroup, type GroupFilterValue } from './MuscleGroups';
+import { estimateSeconds, formatEstimate, type EstimateSet } from '../../shared/estimate';
 import {
   Button,
   Chip,
@@ -87,6 +91,7 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
   }, []);
 
   const active = full?.session.status === 'active';
+  const timing = sessionTiming(full);
   const elapsed = useStopwatch(full?.session.durationMs ?? 0);
   const elapsedRef = useRef(elapsed);
   elapsedRef.current = elapsed;
@@ -134,7 +139,7 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
     }
     await saveSet(se, set, patch);
     if (done && active) {
-      const secs = se.restSeconds ?? se.exercise.restSeconds;
+      const secs = set.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds;
       if (secs > 0) rest.start(secs);
     }
   }
@@ -203,8 +208,14 @@ export function SessionScreen({ sessionId, onClose }: { sessionId: number; onClo
           </button>
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{full?.session.name ?? 'Carregando…'}</p>
-            <p className="flex items-center gap-2 text-xs text-dust">
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-dust">
               {full && (active ? <span className="tabular-nums">{formatDuration(elapsed)}</span> : <span>{relativeDay(full.session.day)} · {formatDuration(full.session.durationMs)}</span>)}
+              {full && timing.total > 0 && (
+                <span className="inline-flex items-center gap-1 text-faint" title="30 s por série + o descanso de cada série">
+                  <Clock className="size-3" aria-hidden />≈ {formatEstimate(timing.total)}
+                  {active && timing.remaining > 0 && timing.remaining < timing.total && ` · faltam ~${formatEstimate(timing.remaining)}`}
+                </span>
+              )}
               {save === 'saving' && <span className="text-faint">salvando…</span>}
               {save === 'error' && <span className="text-rose-300">não salvou</span>}
               {save === 'idle' && full && <span className="text-faint">salvo</span>}
@@ -388,6 +399,7 @@ function ExerciseCard({
   onRemove: () => void;
   onTimer: (secs: number) => void;
 }) {
+  const { groupLabel } = useCatalog();
   const ex = se.exercise;
   const [open, setOpen] = useState(se.status !== 'skipped');
   const [showInfo, setShowInfo] = useState(false);
@@ -420,7 +432,7 @@ function ExerciseCard({
           </span>
           <span className="mt-0.5 block text-sm text-dust">
             {targetLabel({ ...se, measure: ex.measure, perSide: ex.perSide })} · {KIND_LABEL[ex.kind as ExerciseKind]}
-            {ex.muscleGroup && ` · ${ex.muscleGroup}`} · {doneCount}/{se.sets.length} séries
+            {groupLabel(ex.muscleGroupId) && ` · ${groupLabel(ex.muscleGroupId)}`} · {doneCount}/{se.sets.length} séries
           </span>
         </span>
         <ChevronDown className={cx('mt-1 size-5 shrink-0 text-faint transition-transform', open && 'rotate-180')} aria-hidden />
@@ -665,6 +677,10 @@ function SetRowView({
         <button onClick={() => setShowNote((s) => !s)} className={cx('inline-flex items-center gap-1', set.notes ? 'text-nebula-soft' : 'text-faint hover:text-dust')}>
           <MessageSquareText className="size-3.5" aria-hidden /> {set.notes ? 'obs' : 'anotar'}
         </button>
+        <RestEdit
+          value={set.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds}
+          onSave={(n) => onSave({ restSeconds: n })}
+        />
         {isTime && (
           <button
             onClick={() => onTimer(set.seconds ?? se.targetSeconds ?? se.exercise.defaultSeconds ?? 30)}
@@ -825,21 +841,24 @@ function AddExerciseModal({
   onClose: () => void;
   onPick: (id: number) => void;
 }) {
-  const { exercises } = useCatalog();
+  const { exercises, groupById } = useCatalog();
   const [q, setQ] = useState('');
   const [kind, setKind] = useState('');
+  const [group, setGroup] = useState<GroupFilterValue>(EMPTY_GROUP_FILTER);
   const list = exercises.filter(
     (e) =>
       !e.archived &&
       !exclude.includes(e.id) &&
       (!kind || e.kind === kind) &&
+      matchesGroup(e, group, groupById) &&
       e.name.toLowerCase().includes(q.trim().toLowerCase()),
   );
   return (
     <Modal title="Adicionar exercício" onClose={onClose}>
-      <div className="mb-3 flex gap-2">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" autoFocus />
-        <Select value={kind} onChange={(e) => setKind(e.target.value)} className="w-40">
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" autoFocus className="mb-2" />
+      <div className="mb-3 flex flex-wrap gap-2">
+        <GroupFilter value={group} onChange={setGroup} className="contents" />
+        <Select value={kind} onChange={(e) => setKind(e.target.value)} className="w-40" aria-label="Tipo">
           <option value="">Todos</option>
           {Object.entries(KIND_LABEL).map(([k, l]) => (
             <option key={k} value={k}>
@@ -865,3 +884,64 @@ function AddExerciseModal({
   );
 }
 
+
+/**
+ * Tempo estimado da sessão (30 s por série + descanso) e quanto falta,
+ * contando só as séries ainda não feitas dos exercícios não pulados.
+ */
+function sessionTiming(full: SessionFull | null) {
+  if (!full) return { total: 0, remaining: 0 };
+  const all: (EstimateSet & { done: boolean })[] = [];
+  for (const se of full.exercises) {
+    if (se.status === 'skipped') continue;
+    for (const s of se.sets) {
+      all.push({
+        measure: se.exercise.measure,
+        perSide: se.exercise.perSide,
+        seconds: s.seconds ?? se.targetSeconds ?? se.exercise.defaultSeconds,
+        rest: s.restSeconds ?? se.restSeconds ?? se.exercise.restSeconds,
+        done: s.done,
+      });
+    }
+  }
+  return { total: estimateSeconds(all), remaining: estimateSeconds(all.filter((s) => !s.done)) };
+}
+
+/** Descanso desta série: toque para editar. */
+function RestEdit({ value, onSave }: { value: number; onSave: (n: number | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState<number | null>(value);
+  if (!editing) {
+    return (
+      <button
+        onClick={() => {
+          setV(value);
+          setEditing(true);
+        }}
+        title="Descanso depois desta série"
+        className="inline-flex items-center gap-1 text-faint hover:text-cyan"
+      >
+        <Hourglass className="size-3.5" aria-hidden /> {value}s
+      </button>
+    );
+  }
+  const commit = () => {
+    setEditing(false);
+    if (v !== value) onSave(v);
+  };
+  return (
+    <span className="inline-flex items-center gap-1 text-faint">
+      <Hourglass className="size-3.5" aria-hidden />
+      <NumberInput
+        autoFocus
+        value={v}
+        onChange={setV}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+        aria-label="Descanso em segundos"
+        className="w-14 px-1.5 py-0.5 text-center text-xs"
+      />
+      s
+    </span>
+  );
+}

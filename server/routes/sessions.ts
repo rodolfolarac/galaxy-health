@@ -14,6 +14,7 @@ import {
   type SetRow,
 } from '../db/schema.js';
 import { loadCatalog } from '../lib/catalog.js';
+import { restForSet } from '../../shared/estimate.js';
 import {
   HttpError,
   dayString,
@@ -42,6 +43,7 @@ type Plan = {
   targetRepsMax: number | null;
   targetSeconds: number | null;
   restSeconds: number | null;
+  restPerSet: (number | null)[];
   supersetGroup: string | null;
   bandIds: number[];
   setup: string | null;
@@ -87,6 +89,7 @@ async function addExerciseToSession(
       position: i,
       ...load,
       loadKg: estimate(load),
+      restSeconds: restForSet(plan, plan.exercise.restSeconds, i),
     };
   });
   if (rows.length) await db.insert(sets).values(rows);
@@ -129,6 +132,7 @@ sessionsRouter.post('/', async (req, res) => {
       targetRepsMax: item.targetRepsMax,
       targetSeconds: item.targetSeconds ?? exercise.defaultSeconds,
       restSeconds: item.restSeconds,
+      restPerSet: item.restPerSet,
       supersetGroup: item.supersetGroup,
       bandIds: item.bandIds.length ? item.bandIds : exercise.defaultBandIds,
       setup: item.setup ?? exercise.defaultSetup,
@@ -357,6 +361,7 @@ sessionsRouter.post('/:id/exercises', async (req, res) => {
       targetRepsMax: null,
       targetSeconds: ex.defaultSeconds,
       restSeconds: null,
+      restPerSet: [],
       supersetGroup: null,
       bandIds: ex.defaultBandIds,
       setup: ex.defaultSetup,
@@ -422,6 +427,7 @@ sessionExercisesRouter.post('/:id/sets', async (req, res) => {
       position: (last?.position ?? -1) + 1,
       ...load,
       loadKg: catalog.estimate(load),
+      restSeconds: last?.restSeconds ?? se.restSeconds,
     })
     .returning();
   res.status(201).json(row);
@@ -438,6 +444,7 @@ const setPatch = z.object({
   bandIds: idList.optional(),
   setup: optText,
   adjustPct: z.number().min(-90).max(500).nullish(),
+  restSeconds: z.number().int().min(0).max(1800).nullish(),
   rpe: z.number().int().min(1).max(10).nullish(),
   notes: optText,
   done: z.boolean().optional(),

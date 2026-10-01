@@ -9,10 +9,11 @@ type Json<T> = {
 export type { ExercisePerf, Trend };
 export type VideoLink = S.VideoLink;
 export type Band = Json<S.Band>;
+export type MuscleGroup = Json<S.MuscleGroup> & { exerciseCount: number };
 export type Exercise = Json<S.Exercise> & { timesDone?: number; lastDay?: string | null };
 export type WorkoutItem = Json<S.WorkoutItem>;
-export type Workout = Json<S.Workout> & { items: WorkoutItem[]; lastDay?: string | null };
-export type WorkoutLite = Json<S.Workout> & { itemCount: number };
+export type Workout = Json<S.Workout> & { items: WorkoutItem[]; lastDay?: string | null; estimatedSeconds: number };
+export type WorkoutLite = Json<S.Workout> & { itemCount: number; estimatedSeconds: number };
 export type Program = Json<S.Program>;
 export type Session = Json<S.Session>;
 export type SessionListItem = Session & {

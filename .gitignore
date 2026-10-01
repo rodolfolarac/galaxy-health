@@ -8,3 +8,6 @@ dist-server
 .env*
 .pglite
 !.env.example
+
+# Material do curso (licenciado) — não versionar
+*.pdf

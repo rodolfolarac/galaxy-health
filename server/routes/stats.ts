@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { checkins, sessions, sets, workoutItems, workouts } from '../db/schema.js';
+import { estimateSeconds, planSets } from '../../shared/estimate.js';
 import { dayQuery, HttpError } from '../lib/http.js';
-import { getProgram } from './workouts.js';
+import { exerciseMap, getProgram } from './workouts.js';
 
 export const statsRouter = Router();
 
@@ -55,12 +56,12 @@ statsRouter.get('/today', async (req, res) => {
     .from(workouts)
     .where(eq(workouts.archived, false))
     .orderBy(asc(workouts.sortOrder), asc(workouts.id));
-  const counts = await db
-    .select({ workoutId: workoutItems.workoutId, n: sql<number>`count(*)` })
-    .from(workoutItems)
-    .groupBy(workoutItems.workoutId);
-  const countBy = new Map(counts.map((c) => [c.workoutId, Number(c.n)]));
-  const lite = all.map((w) => ({ ...w, itemCount: countBy.get(w.id) ?? 0 }));
+  const items = await db.select().from(workoutItems).orderBy(asc(workoutItems.position));
+  const exById = await exerciseMap();
+  const lite = all.map((w) => {
+    const mine = items.filter((it) => it.workoutId === w.id);
+    return { ...w, itemCount: mine.length, estimatedSeconds: estimateSeconds(planSets(mine, exById)) };
+  });
   const byId = new Map(lite.map((w) => [w.id, w]));
 
   let scheduled: typeof lite = [];

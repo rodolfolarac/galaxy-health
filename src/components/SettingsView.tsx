@@ -5,6 +5,7 @@ import { useCatalog } from '../lib/catalog';
 import { bandMidKg } from '../../shared/load';
 import type { Band } from '../lib/types';
 import { BandSwatch } from './Load';
+import { MuscleGroupsSettings } from './MuscleGroups';
 import { Button, cx, Field, Input, Modal, Notice, NumberInput, Panel, SectionTitle } from './ui';
 
 const BAND_COLORS = ['#facc15', '#f97316', '#ef4444', '#ec4899', '#a855f7', '#3b82f6', '#22c55e', '#52525b', '#f5f5f4'];
@@ -86,6 +87,16 @@ export function SettingsView({ onLogout }: { onLogout: () => void }) {
             ))}
           </div>
         )}
+      </section>
+
+      <section>
+        <SectionTitle>Grupos musculares</SectionTitle>
+        <p className="-mt-1 mb-3 text-sm text-dust">
+          Crie subcategorias dentro de cada grupo (ex.: Peitoral → superior, médio, inferior) para filtrar
+          exercícios ao montar o treino. Toque no nome para renomear. Para mover vários exercícios de uma vez,
+          use “Organizar” na aba Exercícios.
+        </p>
+        <MuscleGroupsSettings />
       </section>
 
       <section>

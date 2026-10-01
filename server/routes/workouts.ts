@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.js';
-import { program, sessions, workoutItems, workouts, type WorkoutItem } from '../db/schema.js';
+import { exercises, program, sessions, workoutItems, workouts, type WorkoutItem } from '../db/schema.js';
+import { estimateSeconds, planSets } from '../../shared/estimate.js';
 import { HttpError, idList, idParam, notFound, optInt, optText, parseBody } from '../lib/http.js';
 
 export const workoutsRouter = Router();
@@ -14,6 +15,7 @@ const itemSchema = z.object({
   targetRepsMax: optInt,
   targetSeconds: optInt,
   restSeconds: optInt,
+  restPerSet: z.array(z.number().int().min(0).max(1800).nullable()).max(20).optional(),
   supersetGroup: optText,
   bandIds: idList.optional(),
   setup: optText,
@@ -46,6 +48,11 @@ async function itemsFor(ids: number[]) {
   return map;
 }
 
+export async function exerciseMap() {
+  const rows = await db.select().from(exercises);
+  return new Map(rows.map((e) => [e.id, e]));
+}
+
 async function replaceItems(workoutId: number, items: z.infer<typeof itemSchema>[]) {
   await db.delete(workoutItems).where(eq(workoutItems.workoutId, workoutId));
   if (items.length) {
@@ -74,11 +81,13 @@ workoutsRouter.get('/', async (_req, res) => {
     .where(eq(sessions.status, 'completed'))
     .groupBy(sessions.workoutId);
   const lastBy = new Map(last.map((l) => [l.workoutId, l.lastDay]));
+  const exById = await exerciseMap();
   res.json({
     workouts: rows.map((w) => ({
       ...w,
       items: items.get(w.id) ?? [],
       lastDay: lastBy.get(w.id) ?? null,
+      estimatedSeconds: estimateSeconds(planSets(items.get(w.id) ?? [], exById)),
     })),
   });
 });

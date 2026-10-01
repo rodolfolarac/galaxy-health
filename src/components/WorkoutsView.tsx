@@ -3,12 +3,14 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarRange,
+  Clock,
   Copy,
   ListChecks,
   Pencil,
   Play,
   Plus,
   Repeat,
+  Timer,
   Trash2,
   X,
 } from 'lucide-react';
@@ -17,6 +19,8 @@ import { useCatalog } from '../lib/catalog';
 import { KIND_LABEL, localDay, relativeDay, targetLabel, WEEKDAYS } from '../lib/format';
 import type { ExerciseKind, Program, Workout } from '../lib/types';
 import { LoadPicker, LoadSummary } from './Load';
+import { EMPTY_GROUP_FILTER, GroupFilter, matchesGroup, type GroupFilterValue } from './MuscleGroups';
+import { estimateSeconds, formatEstimate, planSets } from '../../shared/estimate';
 import {
   Button,
   Chip,
@@ -107,7 +111,9 @@ export function WorkoutsView({ onOpenSession }: { onOpenSession: (id: number) =>
                       {w.name} {w.archived && <span className="text-xs text-faint">(arquivado)</span>}
                     </p>
                     <p className="text-xs text-dust">
-                      {w.items.length} exercícios · {w.lastDay ? `feito ${relativeDay(w.lastDay)}` : 'nunca feito'}
+                      {w.items.length} exercícios
+                      {w.items.length > 0 && ` · ≈ ${formatEstimate(w.estimatedSeconds)}`} ·{' '}
+                      {w.lastDay ? `feito ${relativeDay(w.lastDay)}` : 'nunca feito'}
                     </p>
                   </div>
                 </div>
@@ -230,6 +236,7 @@ function WorkoutEditor({
           targetRepsMax: null,
           targetSeconds: ex.measure === 'time' ? ex.defaultSeconds : null,
           restSeconds: null,
+          restPerSet: [],
           supersetGroup: null,
           bandIds: [],
           setup: null,
@@ -261,6 +268,7 @@ function WorkoutEditor({
   }
 
   const loadItem = items.find((i) => i.key === loadFor);
+  const estimate = estimateSeconds(planSets(items, exerciseById));
 
   return (
     <Modal
@@ -269,7 +277,14 @@ function WorkoutEditor({
       onClose={onClose}
       footer={
         <div className="flex items-center justify-end gap-2 pb-1">
-          {error && <span className="mr-auto text-sm text-rose-300">{error}</span>}
+          {error ? (
+            <span className="mr-auto text-sm text-rose-300">{error}</span>
+          ) : (
+            <span className="mr-auto flex items-center gap-1.5 text-sm text-dust" title="30 s por série + o descanso de cada série">
+              <Clock className="size-4" aria-hidden />
+              {items.length ? `≈ ${formatEstimate(estimate)}` : '—'}
+            </span>
+          )}
           <Button variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
@@ -332,7 +347,7 @@ function WorkoutEditor({
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <Field label="Séries">
-                      <NumberInput value={it.targetSets} onChange={(n) => update(it.key, { targetSets: n ?? 1 })} />
+                      <NumberInput value={it.targetSets} onChange={(n) => update(it.key, { targetSets: n ?? 1, restPerSet: it.restPerSet.slice(0, n ?? 1) })} />
                     </Field>
                     {isTime ? (
                       <Field label={`Segundos${ex.perSide ? '/lado' : ''}`}>
@@ -348,7 +363,7 @@ function WorkoutEditor({
                         </Field>
                       </>
                     )}
-                    <Field label="Descanso (s)">
+                    <Field label="Descanso padrão (s)">
                       <NumberInput value={it.restSeconds} onChange={(n) => update(it.key, { restSeconds: n })} placeholder={String(ex.restSeconds)} />
                     </Field>
                     <Field label="Bi-set">
@@ -360,6 +375,12 @@ function WorkoutEditor({
                       />
                     </Field>
                   </div>
+                  <RestPerSet
+                    sets={it.targetSets}
+                    fallback={it.restSeconds ?? ex.restSeconds}
+                    value={it.restPerSet}
+                    onChange={(restPerSet) => update(it.key, { restPerSet })}
+                  />
                   {ex.equipment !== 'bodyweight' && (
                     <button
                       onClick={() => setLoadFor(it.key)}
@@ -424,9 +445,17 @@ function PickExercises({
   onClose: () => void;
   onPick: (ids: number[]) => void;
 }) {
+  const { groupById, groupLabel } = useCatalog();
   const [sel, setSel] = useState<number[]>([]);
   const [q, setQ] = useState('');
-  const list = exercises.filter((e) => e.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const [kind, setKind] = useState('');
+  const [group, setGroup] = useState<GroupFilterValue>(EMPTY_GROUP_FILTER);
+  const list = exercises.filter(
+    (e) =>
+      (!kind || e.kind === kind) &&
+      matchesGroup(e, group, groupById) &&
+      e.name.toLowerCase().includes(q.trim().toLowerCase()),
+  );
   return (
     <Modal
       title="Escolher exercícios"
@@ -439,7 +468,20 @@ function PickExercises({
         </div>
       }
     >
-      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" className="mb-3" autoFocus />
+      <div className="mb-3 space-y-2">
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" autoFocus />
+        <div className="flex flex-wrap gap-2">
+          <Select value={kind} onChange={(e) => setKind(e.target.value)} className="w-auto" aria-label="Tipo">
+            <option value="">Todos os tipos</option>
+            {Object.entries(KIND_LABEL).map(([k, l]) => (
+              <option key={k} value={k}>
+                {l}
+              </option>
+            ))}
+          </Select>
+          <GroupFilter value={group} onChange={setGroup} className="contents" />
+        </div>
+      </div>
       <div className="space-y-1">
         {list.map((e) => {
           const on = sel.includes(e.id);
@@ -456,13 +498,74 @@ function PickExercises({
               <span className="flex-1">{e.name}</span>
               <span className="text-xs text-faint">
                 {KIND_LABEL[e.kind as ExerciseKind]}
-                {e.muscleGroup && ` · ${e.muscleGroup}`}
+                {groupLabel(e.muscleGroupId) && ` · ${groupLabel(e.muscleGroupId)}`}
               </span>
             </button>
           );
         })}
+        {!list.length && <p className="py-4 text-center text-sm text-faint">Nada com esses filtros.</p>}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Descanso de cada série. Vazio = usa o descanso padrão do item. Fica
+ * recolhido até alguma série ter um valor próprio.
+ */
+function RestPerSet({
+  sets,
+  fallback,
+  value,
+  onChange,
+}: {
+  sets: number;
+  fallback: number;
+  value: (number | null)[];
+  onChange: (v: (number | null)[]) => void;
+}) {
+  const custom = value.some((v) => v != null);
+  const [open, setOpen] = useState(custom);
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="mt-2 inline-flex items-center gap-1.5 text-xs text-nebula-soft hover:underline">
+        <Timer className="size-3.5" aria-hidden /> Descanso diferente em cada série
+      </button>
+    );
+  }
+  const set = (i: number, n: number | null) => {
+    const next = Array.from({ length: sets }, (_, j) => value[j] ?? null);
+    next[i] = n;
+    // Remove nulos no fim para não guardar lixo.
+    while (next.length && next[next.length - 1] == null) next.pop();
+    onChange(next);
+  };
+  return (
+    <div className="mt-2 rounded-xl bg-black/20 p-2.5">
+      <div className="mb-1.5 flex items-center justify-between text-xs text-dust">
+        <span className="inline-flex items-center gap-1.5">
+          <Timer className="size-3.5" aria-hidden /> Descanso após cada série (s)
+        </span>
+        {custom && (
+          <button onClick={() => onChange([])} className="text-faint hover:text-starlight">
+            usar {fallback}s em todas
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {Array.from({ length: sets }, (_, i) => (
+          <label key={i} className="flex items-center gap-1.5 text-xs text-faint">
+            S{i + 1}
+            <NumberInput
+              value={value[i] ?? null}
+              onChange={(n) => set(i, n)}
+              placeholder={String(fallback)}
+              className="w-16 px-2 py-1.5 text-center text-sm"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   bodyMetrics,
   checkins,
   exercises,
+  muscleGroups,
   program,
   sessionExercises,
   sessions,
@@ -87,8 +88,9 @@ exportRouter.get('/sets.csv', async (_req, res) => {
 exportRouter.get('/backup.json', async (_req, res) => {
   const data = {
     exportedAt: new Date().toISOString(),
-    version: 1,
+    version: 2,
     bands: await db.select().from(bands),
+    muscleGroups: await db.select().from(muscleGroups),
     exercises: await db.select().from(exercises),
     workouts: await db.select().from(workouts),
     workoutItems: await db.select().from(workoutItems),

@@ -210,6 +210,45 @@ try {
     assert.ok(backup.sets.length >= 7);
   });
 
+  await step('grupos, subcategorias e mudança em lote', async () => {
+    const peito = await call('POST', '/muscle-groups', { name: 'Peitoral' }, 201);
+    const sup = await call('POST', '/muscle-groups', { name: 'Peitoral superior', parentId: peito.id }, 201);
+    await call('POST', '/muscle-groups', { name: 'peitoral SUPERIOR', parentId: peito.id }, 409);
+    await call('POST', '/muscle-groups', { name: 'Neto', parentId: sup.id }, 400);
+    const ex = await call('POST', '/exercises', { name: 'Supino inclinado', kind: 'strength', equipment: 'band', measure: 'reps', muscleGroupId: peito.id }, 201);
+    assert.equal((await call('POST', '/exercises/bulk-group', { ids: [ex.id], muscleGroupId: sup.id })).updated, 1);
+    const g = await call('GET', '/muscle-groups');
+    assert.equal(g.groups.find((x: any) => x.id === sup.id).exerciseCount, 1);
+    // Apagar a subcategoria devolve o exercício ao grupo pai.
+    await call('DELETE', `/muscle-groups/${sup.id}`);
+    const after = (await call('GET', '/exercises')).exercises.find((x: any) => x.id === ex.id);
+    assert.equal(after.muscleGroupId, peito.id);
+  });
+
+  await step('descanso por série e tempo estimado', async () => {
+    const a = await call('POST', '/exercises', { name: 'Remada', kind: 'strength', equipment: 'band', measure: 'reps', restSeconds: 60 }, 201);
+    const p = await call('POST', '/exercises', { name: 'Prancha', kind: 'bodyweight', equipment: 'bodyweight', measure: 'time', defaultSeconds: 40 }, 201);
+    const w = await call('POST', '/workouts', {
+      name: 'Teste tempo',
+      items: [
+        { exerciseId: a.id, targetSets: 3, targetReps: 10, restSeconds: 60, restPerSet: [90, 120, null] },
+        { exerciseId: p.id, targetSets: 2, targetSeconds: 40, restSeconds: 30 },
+      ],
+    }, 201);
+    assert.deepEqual(w.items[0].restPerSet, [90, 120, null]);
+    // Remada: 3×30s + 90 + 120 + 60 = 360 · Prancha: 2×40s + 30 (o descanso da última série não conta) = 110 → 470 s
+    const list = await call('GET', '/workouts');
+    assert.equal(list.workouts.find((x: any) => x.id === w.id).estimatedSeconds, 470);
+    const today = await call('GET', '/stats/today?day=2026-10-01&weekday=4');
+    assert.equal(today.workouts.find((x: any) => x.id === w.id).estimatedSeconds, 470);
+    const s = await call('POST', '/sessions', { workoutId: w.id, day: '2026-10-01' }, 201);
+    assert.deepEqual(s.exercises[0].sets.map((x: any) => x.restSeconds), [90, 120, 60]);
+    const r = await call('PATCH', `/sets/${s.exercises[0].sets[0].id}`, { restSeconds: 45 });
+    assert.equal(r.set.restSeconds, 45);
+    const extra = await call('POST', `/session-exercises/${s.exercises[0].id}/sets`, undefined, 201);
+    assert.equal(extra.restSeconds, 60, 'série extra copia o descanso da última');
+  });
+
   console.log(`\n  ${passed} cenários ok\n`);
 } finally {
   server.close();

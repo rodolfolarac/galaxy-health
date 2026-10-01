@@ -18,7 +18,7 @@ const videoSchema = z.object({
 const exerciseSchema = z.object({
   name: z.string().trim().min(1, 'informe o nome').max(120),
   kind: z.enum(KINDS),
-  muscleGroup: optText,
+  muscleGroupId: z.number().int().positive().nullish(),
   equipment: z.enum(['band', 'bodyweight', 'other']),
   measure: z.enum(['reps', 'time']),
   perSide: z.boolean().optional(),
@@ -61,6 +61,23 @@ exercisesRouter.post('/', async (req, res) => {
   const body = parseBody(exerciseSchema, req);
   const [row] = await db.insert(exercises).values(body).returning();
   res.status(201).json(row);
+});
+
+/** Move vários exercícios de uma vez para um grupo/subcategoria (ou nenhum). */
+exercisesRouter.post('/bulk-group', async (req, res) => {
+  const { ids, muscleGroupId } = parseBody(
+    z.object({
+      ids: z.array(z.number().int().positive()).min(1).max(500),
+      muscleGroupId: z.number().int().positive().nullable(),
+    }),
+    req,
+  );
+  const rows = await db
+    .update(exercises)
+    .set({ muscleGroupId, updatedAt: new Date() })
+    .where(inArray(exercises.id, ids))
+    .returning({ id: exercises.id });
+  res.json({ updated: rows.length });
 });
 
 exercisesRouter.get('/:id', async (req, res) => {

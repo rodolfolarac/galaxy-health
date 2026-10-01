@@ -6,6 +6,7 @@ import type {
   Comparison,
   Exercise,
   HistoryEntry,
+  MuscleGroup,
   Program,
   RecordRow,
   Session,
@@ -70,12 +71,12 @@ const del = <T = { deleted?: boolean; archived?: boolean }>(path: string) =>
 export { ApiError };
 
 export type WorkoutItemInput = Omit<WorkoutItem, 'id' | 'workoutId' | 'position'>;
-export type WorkoutInput = Partial<Omit<Workout, 'id' | 'items' | 'createdAt' | 'updatedAt'>> & {
+export type WorkoutInput = Partial<Omit<Workout, 'id' | 'items' | 'createdAt' | 'updatedAt' | 'estimatedSeconds'>> & {
   items?: WorkoutItemInput[];
 };
-export type ExerciseInput = Partial<Omit<Exercise, 'id' | 'createdAt' | 'updatedAt' | 'timesDone' | 'lastDay'>>;
+export type ExerciseInput = Partial<Omit<Exercise, 'id' | 'createdAt' | 'updatedAt' | 'timesDone' | 'lastDay' | 'muscleGroup'>>;
 export type SetPatch = Partial<
-  Pick<SetRow, 'reps' | 'seconds' | 'weightKg' | 'bandIds' | 'setup' | 'adjustPct' | 'rpe' | 'notes' | 'done'>
+  Pick<SetRow, 'reps' | 'seconds' | 'weightKg' | 'bandIds' | 'setup' | 'adjustPct' | 'rpe' | 'notes' | 'done' | 'restSeconds'>
 >;
 
 export const api = {
@@ -90,6 +91,15 @@ export const api = {
   updateBand: (id: number, b: Partial<Band>) => patch<Band>(`/bands/${id}`, b),
   deleteBand: (id: number) => del(`/bands/${id}`),
   seedBands: () => post<{ bands: Band[] }>('/bands/defaults'),
+
+  // ── grupos musculares ──
+  muscleGroups: () => request<{ groups: MuscleGroup[] }>('/muscle-groups'),
+  createMuscleGroup: (g: { name: string; parentId?: number | null }) => post<MuscleGroup>('/muscle-groups', g),
+  updateMuscleGroup: (id: number, g: { name?: string; parentId?: number | null; sortOrder?: number }) =>
+    patch<MuscleGroup>(`/muscle-groups/${id}`, g),
+  deleteMuscleGroup: (id: number) => del(`/muscle-groups/${id}`),
+  bulkGroup: (ids: number[], muscleGroupId: number | null) =>
+    post<{ updated: number }>('/exercises/bulk-group', { ids, muscleGroupId }),
 
   // ── exercícios ──
   exercises: () => request<{ exercises: Exercise[] }>('/exercises'),

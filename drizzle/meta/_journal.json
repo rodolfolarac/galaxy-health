@@ -8,6 +8,13 @@
       "when": 1790781626202,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790849467141,
+      "tag": "0001_subcategorias_descanso",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { requireAuth } from './lib/auth.js';
 import { HttpError } from './lib/http.js';
 import { authRouter } from './routes/auth.js';
-import { bandsRouter } from './routes/catalog.js';
+import { bandsRouter, muscleGroupsRouter } from './routes/catalog.js';
 import { exercisesRouter } from './routes/exercises.js';
 import { programRouter, workoutsRouter } from './routes/workouts.js';
 import { sessionExercisesRouter, sessionsRouter, setsRouter } from './routes/sessions.js';
@@ -29,6 +29,7 @@ export function createApp() {
   // Tudo daqui para baixo exige o código de acesso.
   app.use('/api', requireAuth);
   app.use('/api/bands', bandsRouter);
+  app.use('/api/muscle-groups', muscleGroupsRouter);
   app.use('/api/exercises', exercisesRouter);
   app.use('/api/workouts', workoutsRouter);
   app.use('/api/program', programRouter);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CalendarCog,
   Check,
+  Clock,
   Flame,
   Play,
   Plus,
@@ -15,6 +16,7 @@ import { useCatalog } from '../lib/catalog';
 import { formatDay, formatDuration, formatSeconds, localDay, relativeDay, WEEKDAYS } from '../lib/format';
 import type { Exercise, Today, WorkoutLite } from '../lib/types';
 import { useCountdown } from '../lib/timers';
+import { formatEstimate } from '../../shared/estimate';
 import type { Tab } from './TopBar';
 import {
   Button,
@@ -211,6 +213,7 @@ export function TodayView({
               <option key={w.id} value={w.id}>
                 {w.code ? `${w.code} · ` : ''}
                 {w.name}
+                {w.estimatedSeconds > 0 ? ` (≈ ${formatEstimate(w.estimatedSeconds)})` : ''}
               </option>
             ))}
           </Select>
@@ -349,6 +352,12 @@ function WorkoutCard({
             {w.itemCount} {w.itemCount === 1 ? 'exercício' : 'exercícios'}
             {doneToday && <span className="text-lime"> · já feito hoje</span>}
           </p>
+          {w.estimatedSeconds > 0 && (
+            <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-cyan" title="30 s por série + o descanso de cada série">
+              <Clock className="size-4" aria-hidden />
+              Tempo estimado ≈ {formatEstimate(w.estimatedSeconds)}
+            </p>
+          )}
         </div>
       </div>
       {w.notes && <p className="mt-3 line-clamp-2 text-sm text-dust">{w.notes}</p>}
