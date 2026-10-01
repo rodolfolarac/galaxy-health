@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, ne, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { checkins, sessions, sets, workoutItems, workouts } from '../db/schema.js';
 import { estimateSeconds, planSets } from '../../shared/estimate.js';
 import { dayQuery, HttpError } from '../lib/http.js';
 import { exerciseMap, getProgram } from './workouts.js';
+import { finalizeStaleSessions } from '../lib/sessionOps.js';
 
 export const statsRouter = Router();
 
@@ -14,12 +15,18 @@ function shiftDay(day: string, delta: number) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Dias (YYYY-MM-DD) com algum treino concluído ou check-in. */
+/**
+ * Sessão "conta" como feita se foi concluída ou se tem alguma série feita —
+ * o treino em pedaços ao longo do dia fica aberto até a virada do dia.
+ */
+const sessionCounts = sql`(${sessions.status} = 'completed' or (${sessions.status} = 'active' and exists (select 1 from ${sets} where ${sets.sessionId} = ${sessions.id} and ${sets.done})))`;
+
+/** Dias (YYYY-MM-DD) com algum treino feito ou check-in. */
 async function activeDays(from: string, to: string) {
   const s = await db
     .selectDistinct({ day: sessions.day })
     .from(sessions)
-    .where(and(eq(sessions.status, 'completed'), gte(sessions.day, from), lte(sessions.day, to)));
+    .where(and(sessionCounts, gte(sessions.day, from), lte(sessions.day, to)));
   const c = await db
     .selectDistinct({ day: checkins.day })
     .from(checkins)
@@ -45,6 +52,7 @@ async function streakUntil(today: string) {
  */
 statsRouter.get('/today', async (req, res) => {
   const day = dayQuery(req);
+  await finalizeStaleSessions(day);
   const weekday = Number(req.query.weekday);
   if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
     throw new HttpError(400, 'weekday inválido.');
@@ -87,8 +95,35 @@ statsRouter.get('/today', async (req, res) => {
   const todays = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.day, day), eq(sessions.status, 'completed')))
+    .where(and(eq(sessions.day, day), sessionCounts))
     .orderBy(asc(sessions.startedAt));
+
+  // Progresso de cada treino hoje: séries feitas por exercício, para a tela
+  // mostrar "Prancha 2/3" e permitir registrar a próxima série solta.
+  const dayRows = await db
+    .select({ sessionId: sets.sessionId, workoutId: sessions.workoutId, exerciseId: sets.exerciseId, at: sets.completedAt })
+    .from(sets)
+    .innerJoin(sessions, eq(sessions.id, sets.sessionId))
+    .where(and(eq(sessions.day, day), eq(sets.done, true), ne(sessions.status, 'aborted')));
+  // Sessão do dia de cada treino (a mais recente não interrompida): abrir o
+  // treino completo continua essa, em vez de criar outra.
+  const daySessionRows = await db
+    .select({ id: sessions.id, workoutId: sessions.workoutId })
+    .from(sessions)
+    .where(and(eq(sessions.day, day), ne(sessions.status, 'aborted')))
+    .orderBy(asc(sessions.id));
+  const daySessions: Record<string, number> = {};
+  for (const r of daySessionRows) if (r.workoutId) daySessions[r.workoutId] = r.id;
+
+  const progress: Record<string, Record<string, { done: number; lastAt: string | null }>> = {};
+  for (const r of dayRows) {
+    if (!r.workoutId) continue;
+    const w = (progress[r.workoutId] ??= {});
+    const e = (w[r.exerciseId] ??= { done: 0, lastAt: null });
+    e.done++;
+    const at = r.at ? r.at.toISOString() : null;
+    if (at && (!e.lastAt || at > e.lastAt)) e.lastAt = at;
+  }
   const todaysCheckins = await db
     .select()
     .from(checkins)
@@ -99,7 +134,7 @@ statsRouter.get('/today', async (req, res) => {
   const [week] = await db
     .select({ n: sql<number>`count(*)` })
     .from(sessions)
-    .where(and(eq(sessions.status, 'completed'), gte(sessions.day, weekFrom), lte(sessions.day, day)));
+    .where(and(sessionCounts, gte(sessions.day, weekFrom), lte(sessions.day, day)));
   const [weekSets] = await db
     .select({ n: sql<number>`count(*)` })
     .from(sets)
@@ -114,6 +149,8 @@ statsRouter.get('/today', async (req, res) => {
     workouts: lite,
     active,
     sessions: todays,
+    progress,
+    daySessions,
     checkins: todaysCheckins,
     streak: await streakUntil(day),
     week: { sessions: Number(week?.n ?? 0), sets: Number(weekSets?.n ?? 0) },
@@ -127,7 +164,7 @@ statsRouter.get('/calendar', async (req, res) => {
   const s = await db
     .select({ day: sessions.day, name: sessions.name, color: sessions.color, id: sessions.id })
     .from(sessions)
-    .where(and(eq(sessions.status, 'completed'), gte(sessions.day, from), lte(sessions.day, to)));
+    .where(and(sessionCounts, gte(sessions.day, from), lte(sessions.day, to)));
   const c = await db
     .select({ day: checkins.day, n: sql<number>`count(*)` })
     .from(checkins)

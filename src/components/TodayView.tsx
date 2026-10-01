@@ -7,17 +7,20 @@ import {
   Play,
   Plus,
   SkipForward,
+  Star,
   StretchHorizontal,
   Timer,
   Trash2,
+  Trophy,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useCatalog } from '../lib/catalog';
-import { formatDay, formatDuration, formatSeconds, localDay, relativeDay, WEEKDAYS } from '../lib/format';
+import { formatDay, formatDuration, formatSeconds, localDay, relativeDay, relativeTime, targetLabel, WEEKDAYS } from '../lib/format';
 import type { Exercise, Today, WorkoutLite } from '../lib/types';
 import { useCountdown } from '../lib/timers';
 import { formatEstimate } from '../../shared/estimate';
 import type { Tab } from './TopBar';
+import { QuickLogModal } from './QuickLog';
 import {
   Button,
   Chip,
@@ -30,8 +33,8 @@ import {
   NumberInput,
   Panel,
   SectionTitle,
-  Select,
   Spinner,
+  Toast,
 } from './ui';
 
 export function TodayView({
@@ -47,8 +50,11 @@ export function TodayView({
   const [data, setData] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | 'free' | null>(null);
-  const [other, setOther] = useState('');
   const [checkin, setCheckin] = useState<Exercise | 'free' | null>(null);
+  const [quick, setQuick] = useState<{ workoutId: number; exerciseId: number } | null>(null);
+  const [toast, setToast] = useState<{ text: string; record: boolean } | null>(null);
+  /** Treinos que você escolheu fazer hoje (fica lembrado só neste dia, neste aparelho). */
+  const [picked, setPicked] = useDayPick(day);
 
   const load = useCallback(() => {
     api
@@ -66,6 +72,13 @@ export function TodayView({
     () => exercises.filter((e) => !e.archived && (e.kind === 'stretch' || e.kind === 'mobility')),
     [exercises],
   );
+
+  /** Abre o treino completo: continua a sessão de hoje desse treino, se já existir. */
+  async function open(workoutId: number) {
+    const existing = data?.daySessions[workoutId];
+    if (existing) return onOpenSession(existing);
+    return start(workoutId);
+  }
 
   async function start(workoutId: number | null) {
     setBusy(workoutId ?? 'free');
@@ -88,6 +101,18 @@ export function TodayView({
     );
   }
 
+  const suggestedIds =
+    data.program.mode === 'weekly'
+      ? data.scheduled.map((w) => w.id)
+      : data.upcoming[0]?.workout
+        ? [data.upcoming[0].workout.id]
+        : [];
+  const withProgress = Object.keys(data.progress).map(Number);
+  // Padrão: o sugerido do dia + o que já tem série registrada hoje.
+  const shown = picked ?? [...new Set([...suggestedIds, ...withProgress])];
+  const togglePick = (id: number) =>
+    setPicked(shown.includes(id) ? shown.filter((x) => x !== id) : [...shown, id]);
+
   const hasProgram =
     data.program.mode === 'weekly'
       ? Object.values(data.program.weekly).some((l) => l.length)
@@ -109,25 +134,28 @@ export function TodayView({
 
       {error && <Notice>{error}</Notice>}
 
-      {data.active.length > 0 && (
+      {/* Treino livre em andamento (os treinos do programa aparecem nos painéis abaixo). */}
+      {data.active.filter((s) => !s.workoutId || s.day !== day).length > 0 && (
         <div className="space-y-2">
-          {data.active.map((s) => (
-            <Panel key={s.id} className="flex flex-wrap items-center gap-3 border-cyan/40 p-4">
-              <span className="relative flex size-2.5">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-cyan opacity-60" />
-                <span className="relative inline-flex size-2.5 rounded-full bg-cyan" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{s.name}</p>
-                <p className="text-xs text-dust">
-                  Em andamento · começou {relativeDay(s.day, day)} · {formatDuration(s.durationMs)}
-                </p>
-              </div>
-              <Button onClick={() => onOpenSession(s.id)}>
-                <Play className="size-4" aria-hidden /> Continuar
-              </Button>
-            </Panel>
-          ))}
+          {data.active
+            .filter((s) => !s.workoutId || s.day !== day)
+            .map((s) => (
+              <Panel key={s.id} className="flex flex-wrap items-center gap-3 border-cyan/40 p-4">
+                <span className="relative flex size-2.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-cyan opacity-60" />
+                  <span className="relative inline-flex size-2.5 rounded-full bg-cyan" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{s.name}</p>
+                  <p className="text-xs text-dust">
+                    Em andamento · começou {relativeDay(s.day, day)} · {formatDuration(s.durationMs)}
+                  </p>
+                </div>
+                <Button onClick={() => onOpenSession(s.id)}>
+                  <Play className="size-4" aria-hidden /> Continuar
+                </Button>
+              </Panel>
+            ))}
         </div>
       )}
 
@@ -139,10 +167,10 @@ export function TodayView({
             </Button>
           }
         >
-          {data.program.mode === 'weekly' ? `Programado para ${WEEKDAYS[weekday]!.toLowerCase()}` : 'Próximo da sequência'}
+          Treino de hoje
         </SectionTitle>
 
-        {!hasProgram ? (
+        {!hasProgram && !data.workouts.length ? (
           <EmptyState
             title="Monte seu programa"
             action={<Button onClick={() => onGoTo('workouts')}>Ir para Treinos</Button>}
@@ -150,80 +178,86 @@ export function TodayView({
             Cadastre seus exercícios, monte os treinos (A, B, C…) e defina se eles seguem os dias da
             semana ou uma sequência livre como A B C A B.
           </EmptyState>
-        ) : data.scheduled.length === 0 ? (
-          <Panel className="p-5 text-dust">
-            {data.program.mode === 'weekly'
-              ? 'Nada programado para hoje — dia de descanso. Se quiser, escolha um treino abaixo.'
-              : 'A vez agora é de descanso na sequência.'}
-            {data.program.mode === 'rotation' && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-3"
-                onClick={() =>
-                  api
-                    .setRotationIndex(data.program.rotationIndex + 1)
-                    .then(load)
-                    .catch((e) => setError(e.message))
-                }
-              >
-                <SkipForward className="size-4" aria-hidden /> Marcar descanso como feito
-              </Button>
-            )}
-          </Panel>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {data.scheduled.map((w) => (
-              <WorkoutCard
-                key={w.id}
-                w={w}
-                doneToday={data.sessions.some((s) => s.workoutId === w.id)}
-                busy={busy === w.id}
-                onStart={() => start(w.id)}
-              />
-            ))}
-          </div>
-        )}
+          <>
+            <p className="-mt-1 mb-2 text-sm text-dust">
+              {suggestedIds.length
+                ? `Sugerido para ${data.program.mode === 'weekly' ? WEEKDAYS[weekday]!.toLowerCase() : 'agora'}: ${data.workouts
+                    .filter((w) => suggestedIds.includes(w.id))
+                    .map((w) => w.code ?? w.name)
+                    .join(' + ')}. Toque para escolher outro.`
+                : 'Nada programado para hoje. Escolha um treino se quiser treinar.'}
+            </p>
+            <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Escolher treinos de hoje">
+              {data.workouts.map((w) => {
+                const on = shown.includes(w.id);
+                const suggested = suggestedIds.includes(w.id);
+                return (
+                  <button
+                    key={w.id}
+                    onClick={() => togglePick(w.id)}
+                    aria-pressed={on}
+                    className={cx(
+                      'flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors',
+                      on ? 'border-nebula-soft bg-nebula/25 text-starlight' : 'border-ridge bg-black/20 text-dust hover:border-nebula-soft/60',
+                    )}
+                  >
+                    <span className="flex size-6 items-center justify-center rounded-md text-xs font-semibold text-white" style={{ background: w.color }}>
+                      {w.code ?? w.name.slice(0, 1)}
+                    </span>
+                    <span className="max-w-40 truncate">{w.name}</span>
+                    {suggested && <Star className="size-3.5 fill-amber text-amber" aria-label="sugerido" />}
+                  </button>
+                );
+              })}
+            </div>
 
-        {data.program.mode === 'rotation' && data.upcoming.length > 1 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-dust">
-            Depois:
-            {data.upcoming.slice(1).map((u, i) => (
-              <button
-                key={i}
-                title="Pular para este na sequência"
-                onClick={() =>
-                  api
-                    .setRotationIndex(u.index)
-                    .then(load)
-                    .catch((e) => setError(e.message))
-                }
-                className="rounded-full border border-ridge px-2.5 py-0.5 text-xs hover:border-nebula-soft hover:text-starlight"
-              >
-                {u.workout ? (u.workout.code ?? u.workout.name) : 'descanso'}
-              </button>
-            ))}
-          </div>
-        )}
+            {data.program.mode === 'rotation' && data.upcoming.length > 1 && (
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-dust">
+                Sequência — depois:
+                {data.upcoming.slice(1).map((u, i) => (
+                  <button
+                    key={i}
+                    title="Pular para este na sequência"
+                    onClick={() => api.setRotationIndex(u.index).then(load).catch((e) => setError(e.message))}
+                    className="rounded-full border border-ridge px-2.5 py-0.5 text-xs hover:border-nebula-soft hover:text-starlight"
+                  >
+                    {u.workout ? (u.workout.code ?? u.workout.name) : 'descanso'}
+                  </button>
+                ))}
+                {!data.upcoming[0]?.workout && (
+                  <Button variant="outline" size="sm" onClick={() => api.setRotationIndex(data.program.rotationIndex + 1).then(load).catch((e) => setError(e.message))}>
+                    <SkipForward className="size-4" aria-hidden /> Marcar descanso como feito
+                  </Button>
+                )}
+              </div>
+            )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Select value={other} onChange={(e) => setOther(e.target.value)} className="w-full sm:w-80">
-            <option value="">Fazer outro treino…</option>
-            {data.workouts.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.code ? `${w.code} · ` : ''}
-                {w.name}
-                {w.estimatedSeconds > 0 ? ` (≈ ${formatEstimate(w.estimatedSeconds)})` : ''}
-              </option>
-            ))}
-          </Select>
-          <Button variant="outline" disabled={!other || busy != null} onClick={() => start(Number(other))}>
-            Começar
-          </Button>
-          <Button variant="ghost" disabled={busy != null} onClick={() => start(null)}>
-            <Plus className="size-4" aria-hidden /> Treino livre
-          </Button>
-        </div>
+            <div className="space-y-4">
+              {data.workouts
+                .filter((w) => shown.includes(w.id))
+                .sort((x, y) => Number(suggestedIds.includes(y.id)) - Number(suggestedIds.includes(x.id)))
+                .map((w) => (
+                  <DayWorkoutPanel
+                    key={w.id}
+                    w={w}
+                    suggested={suggestedIds.includes(w.id)}
+                    progress={data.progress[w.id] ?? {}}
+                    busy={busy === w.id}
+                    onOpen={() => open(w.id)}
+                    onQuick={(exerciseId) => setQuick({ workoutId: w.id, exerciseId })}
+                  />
+                ))}
+              {!shown.length && <p className="text-sm text-faint">Nenhum treino escolhido para hoje.</p>}
+            </div>
+
+            <div className="mt-3">
+              <Button variant="ghost" disabled={busy != null} onClick={() => start(null)}>
+                <Plus className="size-4" aria-hidden /> Treino livre
+              </Button>
+            </div>
+          </>
+        )}
       </section>
 
       <section>
@@ -271,8 +305,16 @@ export function TodayView({
               >
                 <span className="size-2.5 rounded-full" style={{ background: s.color }} aria-hidden />
                 <span className="flex-1 font-medium">{s.name}</span>
-                <span className="text-sm text-dust">{formatDuration(s.durationMs)}</span>
-                <Check className="size-4 text-lime" aria-hidden />
+                {s.status === 'completed' ? (
+                  <>
+                    <span className="text-sm text-dust">{formatDuration(s.durationMs)}</span>
+                    <Check className="size-4 text-lime" aria-hidden />
+                  </>
+                ) : (
+                  <span className="text-xs text-cyan">
+                    {Object.values(data.progress[s.workoutId ?? -1] ?? {}).reduce((a, x) => a + x.done, 0)} séries · em andamento
+                  </span>
+                )}
               </button>
             ))}
             {data.checkins.map((c) => (
@@ -298,6 +340,28 @@ export function TodayView({
           </div>
         )}
       </section>
+
+      {quick && (
+        <QuickLogModal
+          workoutId={quick.workoutId}
+          exerciseId={quick.exerciseId}
+          day={day}
+          onClose={() => setQuick(null)}
+          onLogged={(info) => {
+            setQuick(null);
+            setToast(info);
+            load();
+          }}
+        />
+      )}
+      {toast && (
+        <Toast tone={toast.record ? 'record' : 'info'} onDone={() => setToast(null)}>
+          <span className="flex items-center gap-2">
+            {toast.record ? <Trophy className="size-4" aria-hidden /> : <Check className="size-4 text-lime" aria-hidden />}
+            {toast.text}
+          </span>
+        </Toast>
+      )}
 
       {checkin && (
         <CheckinModal
@@ -326,47 +390,121 @@ function Stat({ icon, value, label }: { icon?: React.ReactNode; value: number; l
   );
 }
 
-function WorkoutCard({
+/**
+ * Um treino na tela Hoje: cada exercício com o progresso do dia e um botão
+ * para registrar a próxima série solta — sem precisar abrir o treino inteiro.
+ */
+function DayWorkoutPanel({
   w,
-  doneToday,
+  suggested,
+  progress,
   busy,
-  onStart,
+  onOpen,
+  onQuick,
 }: {
   w: WorkoutLite;
-  doneToday: boolean;
+  suggested: boolean;
+  progress: Record<string, { done: number; lastAt: string | null }>;
   busy: boolean;
-  onStart: () => void;
+  onOpen: () => void;
+  onQuick: (exerciseId: number) => void;
 }) {
+  const { workouts, exerciseById } = useCatalog();
+  const items = workouts.find((x) => x.id === w.id)?.items ?? [];
+  const totalTarget = items.reduce((a, it) => a + it.targetSets, 0);
+  const totalDone = items.reduce((a, it) => a + Math.min(progress[it.exerciseId]?.done ?? 0, it.targetSets), 0);
+  const started = Object.keys(progress).length > 0;
+
   return (
-    <Panel className="aura relative overflow-hidden p-5">
-      <div className="flex items-start gap-3">
-        <span
-          className="flex size-11 shrink-0 items-center justify-center rounded-xl text-lg font-semibold text-white"
-          style={{ background: w.color }}
-        >
+    <Panel className="overflow-hidden">
+      <div className="flex items-start gap-3 p-4 pb-3">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl text-lg font-semibold text-white" style={{ background: w.color }}>
           {w.code ?? w.name.slice(0, 1)}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-medium">{w.name}</p>
-          <p className="text-sm text-dust">
-            {w.itemCount} {w.itemCount === 1 ? 'exercício' : 'exercícios'}
-            {doneToday && <span className="text-lime"> · já feito hoje</span>}
+          <p className="flex flex-wrap items-center gap-2 text-lg font-medium">
+            <span className="truncate">{w.name}</span>
+            {suggested && <span className="rounded-full border border-amber/40 px-2 py-0.5 text-[11px] font-normal text-amber">sugerido hoje</span>}
           </p>
-          {w.estimatedSeconds > 0 && (
-            <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-cyan" title="30 s por série + o descanso de cada série">
-              <Clock className="size-4" aria-hidden />
-              Tempo estimado ≈ {formatEstimate(w.estimatedSeconds)}
-            </p>
-          )}
+          <p className="text-sm text-dust">
+            {totalDone}/{totalTarget} séries
+            {w.estimatedSeconds > 0 && (
+              <>
+                {' · '}
+                <span className="inline-flex items-center gap-1 text-cyan" title="30 s por série + o descanso de cada série">
+                  <Clock className="size-3.5" aria-hidden /> ≈ {formatEstimate(w.estimatedSeconds)}
+                </span>
+              </>
+            )}
+          </p>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/10" aria-hidden>
+            <div className="h-full rounded-full bg-lime transition-[width]" style={{ width: `${totalTarget ? (totalDone / totalTarget) * 100 : 0}%` }} />
+          </div>
         </div>
       </div>
-      {w.notes && <p className="mt-3 line-clamp-2 text-sm text-dust">{w.notes}</p>}
-      <Button size="lg" className={cx('mt-4 w-full', !doneToday && 'breathe')} disabled={busy} onClick={onStart}>
-        {busy ? <Spinner /> : <Play className="size-4" aria-hidden />}
-        {doneToday ? 'Fazer de novo' : 'Começar treino'}
-      </Button>
+
+      <ul className="divide-y divide-ridge border-t border-ridge">
+        {items.map((it) => {
+          const ex = exerciseById.get(it.exerciseId);
+          if (!ex) return null;
+          const p = progress[it.exerciseId];
+          const done = p?.done ?? 0;
+          const complete = done >= it.targetSets;
+          return (
+            <li key={it.id} className="flex items-center gap-3 px-4 py-2.5">
+              <button onClick={() => onQuick(ex.id)} className="min-w-0 flex-1 text-left">
+                <span className={cx('block truncate text-sm', complete ? 'text-lime' : 'text-starlight')}>{ex.name}</span>
+                <span className="flex flex-wrap items-center gap-x-2 text-xs text-faint">
+                  {targetLabel({ ...it, measure: ex.measure, perSide: ex.perSide })}
+                  <span className="inline-flex items-center gap-0.5" aria-label={`${done} de ${it.targetSets} séries hoje`}>
+                    {Array.from({ length: Math.max(it.targetSets, done) }, (_, i) => (
+                      <span
+                        key={i}
+                        className={cx('inline-block size-2 rounded-full', i < done ? (i >= it.targetSets ? 'bg-cyan' : 'bg-lime') : 'bg-white/15')}
+                      />
+                    ))}
+                  </span>
+                  {p?.lastAt && <span>· {relativeTime(p.lastAt)}</span>}
+                </span>
+              </button>
+              <Button size="sm" variant={complete ? 'ghost' : 'outline'} onClick={() => onQuick(ex.id)} aria-label={`Registrar série de ${ex.name}`}>
+                <Plus className="size-4" aria-hidden /> Série
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="border-t border-ridge p-3">
+        <Button className={cx('w-full', !started && suggested && 'breathe')} disabled={busy} onClick={onOpen}>
+          {busy ? <Spinner /> : <Play className="size-4" aria-hidden />}
+          {started ? 'Abrir treino completo' : 'Começar treino completo'}
+        </Button>
+      </div>
     </Panel>
   );
+}
+
+/** Escolha de treinos do dia, lembrada no aparelho só para aquela data. */
+function useDayPick(day: string) {
+  const key = `gh:pick:${day}`;
+  const [value, setValue] = useState<number[] | null>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as number[]) : null;
+    } catch {
+      return null;
+    }
+  });
+  const set = (ids: number[]) => {
+    setValue(ids);
+    try {
+      localStorage.setItem(key, JSON.stringify(ids));
+    } catch {
+      /* navegação privada */
+    }
+  };
+  return [value, set] as const;
 }
 
 /** Check-in de alongamento com timer opcional (conta regressiva e vibra no fim). */

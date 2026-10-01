@@ -8,6 +8,7 @@ import type {
   HistoryEntry,
   MuscleGroup,
   Program,
+  QuickContext,
   RecordRow,
   Session,
   SessionExercise,
@@ -156,6 +157,12 @@ export const api = {
   updateSet: (id: number, body: SetPatch) =>
     patch<{ set: SetRow; record: 'load' | 'reps' | null }>(`/sets/${id}`, body),
   deleteSet: (id: number) => del(`/sets/${id}`),
+
+  // ── registro rápido (treino em pedaços ao longo do dia) ──
+  quickContext: (workoutId: number, exerciseId: number, day: string) =>
+    request<QuickContext>(`/quick/context?workoutId=${workoutId}&exerciseId=${exerciseId}&day=${day}`),
+  quickLog: (body: { workoutId: number; exerciseId: number; day: string; reps?: number | null; seconds?: number | null; notes?: string | null }) =>
+    post<{ sessionId: number; set: SetRow; record: 'load' | 'reps' | null; done: number; target: number }>('/quick/log', body),
 
   // ── check-ins e medidas ──
   checkins: (from?: string, to?: string) =>

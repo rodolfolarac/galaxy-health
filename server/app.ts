@@ -13,6 +13,7 @@ import { sessionExercisesRouter, sessionsRouter, setsRouter } from './routes/ses
 import { statsRouter } from './routes/stats.js';
 import { bodyRouter, checkinsRouter } from './routes/log.js';
 import { exportRouter } from './routes/export.js';
+import { quickRouter } from './routes/quick.js';
 
 export function createApp() {
   const app = express();
@@ -40,6 +41,7 @@ export function createApp() {
   app.use('/api/checkins', checkinsRouter);
   app.use('/api/body', bodyRouter);
   app.use('/api/export', exportRouter);
+  app.use('/api/quick', quickRouter);
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Rota não encontrada.' });

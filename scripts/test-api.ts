@@ -249,6 +249,58 @@ try {
     assert.equal(extra.restSeconds, 60, 'série extra copia o descanso da última');
   });
 
+  await step('treino em pedaços ao longo do dia, sem abrir o treino', async () => {
+    const parede = await call('POST', '/exercises', { name: 'Alongamento na parede', kind: 'stretch', equipment: 'bodyweight', measure: 'time', defaultSeconds: 60 }, 201);
+    const barra = await call('POST', '/exercises', { name: 'Barra suspensa', kind: 'stretch', equipment: 'bodyweight', measure: 'time', defaultSeconds: 30 }, 201);
+    const d = await call('POST', '/workouts', { name: 'Diário', code: 'D', items: [
+      { exerciseId: parede.id, targetSets: 3, targetSeconds: 60 },
+      { exerciseId: barra.id, targetSets: 3, targetSeconds: 30 },
+    ] }, 201);
+    const day = '2026-10-05';
+
+    // Manhã: uma série da parede. Ainda não existe sessão — é criada sozinha.
+    let ctx = await call('GET', `/quick/context?workoutId=${d.id}&exerciseId=${parede.id}&day=${day}`);
+    assert.equal(ctx.today.length, 0);
+    const r1 = await call('POST', '/quick/log', { workoutId: d.id, exerciseId: parede.id, day, seconds: 60, notes: 'manhã, travado' }, 201);
+    assert.equal(r1.done, 1);
+    assert.equal(r1.target, 3);
+
+    // Barra a cada meia hora: 4 séries, uma além das 3 previstas.
+    for (let i = 0; i < 4; i++) {
+      const r = await call('POST', '/quick/log', { workoutId: d.id, exerciseId: barra.id, day, seconds: 30 }, 201);
+      assert.equal(r.sessionId, r1.sessionId, 'tudo na mesma sessão do dia');
+      assert.equal(r.done, i + 1);
+    }
+    ctx = await call('GET', `/quick/context?workoutId=${d.id}&exerciseId=${barra.id}&day=${day}`);
+    assert.equal(ctx.today.length, 4);
+
+    const today = await call('GET', `/stats/today?day=${day}&weekday=1`);
+    assert.equal(today.progress[d.id][parede.id].done, 1);
+    assert.equal(today.progress[d.id][barra.id].done, 4);
+    assert.ok(today.sessions.some((x: any) => x.id === r1.sessionId), 'treino parcial já aparece em "feito hoje"');
+    const cal = await call('GET', `/stats/calendar?from=${day}&to=${day}`);
+    assert.equal(cal.days.length, 1, 'dia parcial conta no calendário');
+
+    // Virada do dia: o treino aberto vira concluído; séries não feitas somem.
+    const next = await call('GET', `/stats/today?day=2026-10-06&weekday=2`);
+    assert.equal(next.active.some((x: any) => x.id === r1.sessionId), false);
+    const full = await call('GET', `/sessions/${r1.sessionId}`);
+    assert.equal(full.session.status, 'completed');
+    assert.ok(full.session.durationMs > 0, 'duração estimada pelas séries feitas');
+    assert.equal(full.exercises.find((x: any) => x.exerciseId === parede.id).sets.length, 1);
+    assert.equal(full.exercises.find((x: any) => x.exerciseId === barra.id).sets.length, 4);
+
+    // No dia seguinte, a "última vez" da parede é a de ontem, com a observação.
+    ctx = await call('GET', `/quick/context?workoutId=${d.id}&exerciseId=${parede.id}&day=2026-10-06`);
+    assert.equal(ctx.previous.day, day);
+    assert.equal(ctx.previous.sets[0].notes, 'manhã, travado');
+
+    // Sessão aberta e vazia de um dia anterior é descartada.
+    const empty = await call('POST', '/sessions', { workoutId: d.id, day: '2026-10-06' }, 201);
+    await call('GET', `/stats/today?day=2026-10-07&weekday=3`);
+    await call('GET', `/sessions/${empty.session.id}`, undefined, 404);
+  });
+
   console.log(`\n  ${passed} cenários ok\n`);
 } finally {
   server.close();

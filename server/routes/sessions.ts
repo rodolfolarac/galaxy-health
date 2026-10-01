@@ -1,20 +1,9 @@
 import { Router } from 'express';
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.js';
-import {
-  exercises,
-  program,
-  sessionExercises,
-  sessions,
-  sets,
-  workoutItems,
-  workouts,
-  type Exercise,
-  type SetRow,
-} from '../db/schema.js';
+import { exercises, sessionExercises, sessions, sets, type SetRow } from '../db/schema.js';
 import { loadCatalog } from '../lib/catalog.js';
-import { restForSet } from '../../shared/estimate.js';
 import {
   HttpError,
   dayString,
@@ -30,71 +19,16 @@ import {
   detectRecord,
   loadSessionFull,
   previousPerformances,
-  type Previous,
 } from '../lib/sessionData.js';
-import { getProgram } from './workouts.js';
+import {
+  addExerciseToSession,
+  createSession,
+  exercisePlan,
+  finalizeStaleSessions,
+  finishSessionCore,
+} from '../lib/sessionOps.js';
 
 export const sessionsRouter = Router();
-
-type Plan = {
-  exercise: Exercise;
-  targetSets: number;
-  targetReps: number | null;
-  targetRepsMax: number | null;
-  targetSeconds: number | null;
-  restSeconds: number | null;
-  restPerSet: (number | null)[];
-  supersetGroup: string | null;
-  bandIds: number[];
-  setup: string | null;
-};
-
-/**
- * Cria as séries de um exercício na sessão. A carga vem, nesta ordem: da
- * última vez que o exercício foi feito (série por série), do que está na
- * ficha do treino, ou do padrão do exercício. As reps ficam vazias — a
- * tela mostra as da última vez como referência.
- */
-async function addExerciseToSession(
-  sessionId: number,
-  position: number,
-  plan: Plan,
-  prev: Previous | undefined,
-  estimate: Awaited<ReturnType<typeof loadCatalog>>['estimate'],
-) {
-  const [se] = await db
-    .insert(sessionExercises)
-    .values({
-      sessionId,
-      exerciseId: plan.exercise.id,
-      position,
-      targetSets: plan.targetSets,
-      targetReps: plan.targetReps,
-      targetRepsMax: plan.targetRepsMax,
-      targetSeconds: plan.targetSeconds,
-      restSeconds: plan.restSeconds ?? plan.exercise.restSeconds,
-      supersetGroup: plan.supersetGroup,
-    })
-    .returning();
-
-  const rows = Array.from({ length: plan.targetSets }, (_, i) => {
-    const from = prev?.sets[i] ?? prev?.sets[prev.sets.length - 1];
-    const load = from
-      ? { bandIds: from.bandIds, setup: from.setup, adjustPct: from.adjustPct, weightKg: from.weightKg }
-      : { bandIds: plan.bandIds, setup: plan.setup, adjustPct: null, weightKg: null };
-    return {
-      sessionExerciseId: se!.id,
-      sessionId,
-      exerciseId: plan.exercise.id,
-      position: i,
-      ...load,
-      loadKg: estimate(load),
-      restSeconds: restForSet(plan, plan.exercise.restSeconds, i),
-    };
-  });
-  if (rows.length) await db.insert(sets).values(rows);
-  return se!;
-}
 
 const startSchema = z.object({
   workoutId: z.number().int().positive().nullish(),
@@ -105,65 +39,9 @@ const startSchema = z.object({
 /** Abre uma sessão a partir de um treino (ou vazia, para treino livre). */
 sessionsRouter.post('/', async (req, res) => {
   const body = parseBody(startSchema, req);
-  const catalog = await loadCatalog();
-
-  let name = body.name ?? 'Treino livre';
-  let color = '#3de0e8';
-  let plans: Plan[] = [];
-  let rotationSlot: number | null = null;
-
-  if (body.workoutId) {
-    const [w] = await db.select().from(workouts).where(eq(workouts.id, body.workoutId));
-    if (!w) notFound('Treino');
-    name = w.code ? `${w.code} · ${w.name}` : w.name;
-    color = w.color;
-
-    const items = await db
-      .select({ item: workoutItems, exercise: exercises })
-      .from(workoutItems)
-      .innerJoin(exercises, eq(exercises.id, workoutItems.exerciseId))
-      .where(eq(workoutItems.workoutId, w.id))
-      .orderBy(asc(workoutItems.position), asc(workoutItems.id));
-
-    plans = items.map(({ item, exercise }) => ({
-      exercise,
-      targetSets: item.targetSets,
-      targetReps: item.targetReps ?? exercise.defaultReps,
-      targetRepsMax: item.targetRepsMax,
-      targetSeconds: item.targetSeconds ?? exercise.defaultSeconds,
-      restSeconds: item.restSeconds,
-      restPerSet: item.restPerSet,
-      supersetGroup: item.supersetGroup,
-      bandIds: item.bandIds.length ? item.bandIds : exercise.defaultBandIds,
-      setup: item.setup ?? exercise.defaultSetup,
-    }));
-
-    const p = await getProgram();
-    if (p.mode === 'rotation' && p.rotation[p.rotationIndex] === w.id) rotationSlot = p.rotationIndex;
-  }
-
-  const [session] = await db
-    .insert(sessions)
-    .values({ workoutId: body.workoutId ?? null, name, color, day: body.day, rotationSlot })
-    .returning();
-
-  const prev = await previousPerformances(
-    plans.map((p) => p.exercise.id),
-    session!,
-    1,
-  );
-  let position = 0;
-  for (const plan of plans) {
-    await addExerciseToSession(
-      session!.id,
-      position++,
-      plan,
-      prev.get(plan.exercise.id)?.[0],
-      catalog.estimate,
-    );
-  }
-
-  res.status(201).json(await loadSessionFull(session!.id));
+  await finalizeStaleSessions(body.day);
+  const id = await createSession(body.workoutId ?? null, body.day, body.name ?? null);
+  res.status(201).json(await loadSessionFull(id));
 });
 
 /** Lista de sessões num intervalo de dias, com um resumo de cada uma. */
@@ -263,7 +141,6 @@ sessionsRouter.patch('/:id', async (req, res) => {
  * marcado como pulado — é isso que o comparativo mostra como "deixou de fazer".
  */
 sessionsRouter.post('/:id/finish', async (req, res) => {
-  const id = idParam(req);
   const body = parseBody(
     z.object({
       status: z.enum(['completed', 'aborted']),
@@ -271,52 +148,8 @@ sessionsRouter.post('/:id/finish', async (req, res) => {
     }),
     req,
   );
-  const [s] = await db.select().from(sessions).where(eq(sessions.id, id));
-  if (!s) notFound('Sessão');
-
-  await db
-    .update(sets)
-    .set({ done: true, completedAt: new Date() })
-    .where(
-      and(
-        eq(sets.sessionId, id),
-        eq(sets.done, false),
-        sql`(${sets.reps} is not null or ${sets.seconds} is not null)`,
-      ),
-    );
-  await db.delete(sets).where(and(eq(sets.sessionId, id), eq(sets.done, false)));
-
-  const ses = await db.select().from(sessionExercises).where(eq(sessionExercises.sessionId, id));
-  const counts = await db
-    .select({ seId: sets.sessionExerciseId, n: sql<number>`count(*)` })
-    .from(sets)
-    .where(eq(sets.sessionId, id))
-    .groupBy(sets.sessionExerciseId);
-  const doneBy = new Map(counts.map((c) => [c.seId, Number(c.n)]));
-  for (const se of ses) {
-    const next = (doneBy.get(se.id) ?? 0) > 0 ? 'done' : 'skipped';
-    if (se.status !== next) {
-      await db.update(sessionExercises).set({ status: next }).where(eq(sessionExercises.id, se.id));
-    }
-  }
-
-  const [row] = await db
-    .update(sessions)
-    .set({ status: body.status, durationMs: body.durationMs, endedAt: new Date() })
-    .where(eq(sessions.id, id))
-    .returning();
-
-  // Sequência livre: concluir o treino da vez avança para o próximo.
-  if (body.status === 'completed' && s.rotationSlot != null) {
-    const p = await getProgram();
-    if (p.mode === 'rotation' && p.rotationIndex === s.rotationSlot && p.rotation.length) {
-      await db
-        .update(program)
-        .set({ rotationIndex: (s.rotationSlot + 1) % p.rotation.length })
-        .where(eq(program.id, 1));
-    }
-  }
-
+  const row = await finishSessionCore(idParam(req), body.status, body.durationMs);
+  if (!row) notFound('Sessão');
   res.json(row);
 });
 
@@ -351,24 +184,7 @@ sessionsRouter.post('/:id/exercises', async (req, res) => {
     .where(eq(sessionExercises.sessionId, id));
   const catalog = await loadCatalog();
   const prev = await previousPerformances([ex.id], s, 1);
-  await addExerciseToSession(
-    id,
-    Number(max?.n ?? -1) + 1,
-    {
-      exercise: ex,
-      targetSets: ex.defaultSets,
-      targetReps: ex.defaultReps,
-      targetRepsMax: null,
-      targetSeconds: ex.defaultSeconds,
-      restSeconds: null,
-      restPerSet: [],
-      supersetGroup: null,
-      bandIds: ex.defaultBandIds,
-      setup: ex.defaultSetup,
-    },
-    prev.get(ex.id)?.[0],
-    catalog.estimate,
-  );
+  await addExerciseToSession(id, Number(max?.n ?? -1) + 1, exercisePlan(ex), prev.get(ex.id)?.[0], catalog.estimate);
   res.status(201).json(await loadSessionFull(id));
 });
 

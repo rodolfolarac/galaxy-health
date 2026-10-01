@@ -42,6 +42,15 @@ export function relativeDay(day: string, today = localDay()) {
   return `há ${Math.round(diff / 30)} meses`;
 }
 
+/** "agora", "há 25 min", "há 3 h", ou o horário se for de outro dia. */
+export function relativeTime(iso: string, now = Date.now()) {
+  const diff = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+  if (diff < 1) return 'agora';
+  if (diff < 60) return `há ${diff} min`;
+  if (diff < 12 * 60) return `há ${Math.floor(diff / 60)} h`;
+  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
 export function formatDuration(ms: number) {
   const total = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(total / 3600);

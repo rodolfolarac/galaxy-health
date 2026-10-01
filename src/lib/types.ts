@@ -59,6 +59,10 @@ export type Today = {
   active: Session[];
   sessions: Session[];
   checkins: Checkin[];
+  /** workoutId → exerciseId → séries feitas hoje e a hora da última. */
+  progress: Record<string, Record<string, { done: number; lastAt: string | null }>>;
+  /** workoutId → id da sessão de hoje desse treino. */
+  daySessions: Record<string, number>;
   streak: number;
   week: { sessions: number; sets: number };
 };
@@ -114,6 +118,13 @@ export type RecordRow = {
   bestReps: number;
   bestSeconds: number;
   day: string;
+};
+
+export type QuickContext = {
+  exercise: Exercise;
+  target: { sets: number; reps: number | null; seconds: number | null };
+  today: SetRow[];
+  previous: Previous | null;
 };
 
 export type CalendarDay = {
